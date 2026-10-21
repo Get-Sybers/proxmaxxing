@@ -1,2 +1,2 @@
 # proxmaxxing
-A repository for amiable to extend Ludus and Proxmox clusters configured for Ludus
+A repository containing ansible to extend Ludus and Proxmox clusters including those configured for Ludus.
