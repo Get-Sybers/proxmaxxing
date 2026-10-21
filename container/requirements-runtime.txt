@@ -8,10 +8,10 @@
 
 # community.proxmox transport — the ghost9 token-mint play drives the PVE API
 # through proxmoxer, which speaks HTTP via requests.
-proxmoxer>=2.0,<3
-requests>=2.31,<3
+proxmoxer>=2.3.0,<3
+requests>=2.34.2,<3
 
 # Validators — make the image double as a syntax/lint gate for the plays, so the
 # tree can be checked without a full tox/molecule host setup.
-ansible-lint>=25.0,<26
-yamllint>=1.35,<2
+ansible-lint>=26.10.1,<27
+yamllint>=1.38.0,<2
