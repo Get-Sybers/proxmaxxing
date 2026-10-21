@@ -1,0 +1,46 @@
+---
+# Ludus control plane on the master node — the values the credential, vault,
+# install and auth plays share. They run on localhost (the master node), which
+# is why these live in group_vars/all rather than in the proxmox_cluster group.
+# Copied into place by `make config`; the copy is untracked.
+
+# Install root and the files the plays read from it.
+ludus_root: /opt/ludus
+ludus_config_path: "{{ ludus_root }}/config.yml"
+ludus_db_path: "{{ ludus_root }}/db/data.db"
+# The Ludus API as seen from the node it runs on, and the units behind it.
+ludus_api: https://127.0.0.1:8080/api/v2
+ludus_health_url: https://127.0.0.1:8080/api/health
+ludus_services:
+  - ludus.service
+  - ludus-admin.service
+
+# Public (non-secret) default DEK: the stock database_encryption_key Ludus
+# ships in its own source. It marks "the PocketBase credential store has not
+# yet been initialised with a private key"; plays compare the configured key
+# against it to refuse operating on an uninitialised store. Public by design.
+dek_public_default: "hZD6RwYxrcQ7CS4lRxjdKI7thWp3jg48"
+
+# Range numbers Ludus must never hand out. A range N lives in 10.N.0.0/16, so
+# list the second octet of every 10.N.0.0/16 the cluster itself uses (a storage
+# mesh in 10.77.0.0/16 reserves 77). Empty when the cluster's own networks are
+# outside 10.0.0.0/8, as the example mesh in group_vars/proxmox_cluster/mesh.yml is.
+ludus_reserved_range_numbers: []
+
+# The identity the auth plays act as / rotate, and whether they arm the local
+# ludus CLI (config + sourceable env file) afterwards.
+ludus_identity: RA
+ludus_rotate_target: RA
+ludus_write_cli_config: true
+
+# The Ludus user whose installed collections the post-update and vault plays
+# drive, and the collections path those child runs see.
+ludus_install_user: range-admin
+ludus_user_collections_path: >-
+  {{ ludus_root }}/users/{{ ludus_install_user }}/.ansible/collections:/root/.ansible/collections
+
+# post-update-reconcile: the PVE pools that must keep ludus_users -> NoAccess
+# (the pools your infrastructure guests live in), and whether to re-run the
+# vault invariant afterwards.
+reconcile_noaccess_pools: []
+reconcile_verify_vault_invariant: false

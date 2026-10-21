@@ -1,0 +1,15 @@
+---
+- name: "root | Read the effective uid"
+  ansible.builtin.command: id -u
+  register: __cpf_uid
+  changed_when: false
+  check_mode: false
+  delegate_to: "{{ cluster_preflight_delegate_to }}"
+- name: "root | Assert running as root"
+  ansible.builtin.assert:
+    that: (__cpf_uid.stdout | trim) == '0'
+    fail_msg: >-
+      cluster plays run as root on the PVE node (uid here:
+      {{ __cpf_uid.stdout | trim }}). This is the irreducible operator-root
+      tier — re-run as root; there is no sudo/become path.
+    quiet: true

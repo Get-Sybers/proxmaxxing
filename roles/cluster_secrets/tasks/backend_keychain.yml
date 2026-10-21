@@ -1,0 +1,8 @@
+---
+- name: "backend_keychain | Not yet implemented"
+  ansible.builtin.fail:
+    msg: >-
+      cluster_secrets_backend=keychain is not implemented yet (the secrets
+      keychain is planned, not built). Use backend=file for now. When the keychain
+      exists, implement the lookup HERE — the service-facing interface
+      (get.yml -> cluster_secrets_result) does not change.

@@ -1,0 +1,17 @@
+---
+galaxy_info:
+  role_name: cluster_pb_store
+  namespace: get_sybers
+  author: Get-Sybers
+  description: >-
+    PocketBase API mechanics for the gs_infra_credentials store: superuser
+    auth, collection ensure/verify, and record primitives — all against the
+    PB surface Ludus itself ships, under no_log.
+  company: Get-Sybers
+  license: AGPL-3.0-only
+  min_ansible_version: "2.19.0"
+  platforms:
+    - name: Debian
+      versions: [bookworm, trixie]
+  galaxy_tags: [secrets, pocketbase, credentials, ludus]
+dependencies: []

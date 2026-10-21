@@ -1,0 +1,71 @@
+---
+# get_sybers.cluster — shared molecule base config (docs/04 §9).
+#
+# Molecule auto-discovers this file as the collection base config
+# (MOLECULE_COLLECTION_ROOT = extensions/molecule) and deep-merges each
+# scenario's molecule.yml on top. Everything common to every scenario lives here
+# once; a scenario overrides only what differs (usually just
+# scenario.test_sequence, and its own prepare/converge/verify playbooks).
+#
+# Substrate: a throwaway official Debian 13 container, driven by the
+# community.docker driver. It is NOT a Proxmox node and never touches the
+# cluster — it is a disposable Debian userspace (PVE is Debian) in which the
+# host-side role logic that does not need a live PVE/Ceph/Ludus/PocketBase runs
+# hermetically in CI. Anything that needs real Proxmox is exercised against a
+# live node (see docs/04 §9), not faked in a container.
+dependency:
+  name: galaxy
+  # Single source of pins (docs/02 §13): the collections come from the root
+  # requirements.yml, installed once by `make deps` / CI before the test loop.
+  # Disabling the per-scenario galaxy step keeps molecule from re-resolving them
+  # on every run; the collection under test and its deps are already present.
+  enabled: false
+driver:
+  name: docker
+platforms:
+  # One shared container for every scenario. `molecule test --all` runs scenarios
+  # sequentially (create ... destroy each), so a single fixed name is safe and
+  # keeps the substrate identical across roles. Built from the shared
+  # ../Dockerfile (digest-pinned Debian); no privileged, no systemd, no volumes.
+  - name: cluster-instance
+    image: cluster-debian-trixie
+    dockerfile: ../Dockerfile
+    pre_build_image: false
+    command: sleep infinity
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      # §28: registered/internal facts are addressed explicitly, never injected
+      # as bare top-level vars.
+      inject_facts_as_vars: false
+  inventory:
+    group_vars:
+      all:
+        # The collection variables the roles' defaults reference (standards §4d:
+        # a role default points at the implicit collection variable, which the
+        # cluster inventory defines once). The test container is the whole
+        # cluster, so the values are the fixture's own.
+        cluster_master_node: "{{ inventory_hostname }}"
+        ceph_pool: molecule-ceph
+        sdn_zone: molecule
+        ludus_reserved_range_numbers: []
+  # No ANSIBLE_COLLECTIONS_PATH override: ansible-compat composes the path as its
+  # cache (the collection under test + the galaxy.yml deps) followed by the
+  # standard user/CI collections path (community.general, ansible.posix,
+  # community.docker from the single-source requirements.yml). Overriding it
+  # drops one or the other.
+verifier:
+  name: ansible
+scenario:
+  # The full gate every positive scenario runs. Negative scenarios trim this to
+  # the failure path (they override scenario.test_sequence in their molecule.yml).
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - destroy

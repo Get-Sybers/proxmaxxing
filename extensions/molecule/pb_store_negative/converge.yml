@@ -1,0 +1,33 @@
+---
+- name: Converge (expect a controlled failure)
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: An unreachable PocketBase must stop at the reachability assertion
+      block:
+        - name: Run cluster_pb_store against a closed local port
+          ansible.builtin.include_role:
+            name: get_sybers.cluster.cluster_pb_store
+          vars:
+            cluster_pb_store_base_url: "http://127.0.0.1:1"
+            cluster_pb_store_validate_certs: false
+      rescue:
+        - name: The role stopped at the PocketBase reachability assertion
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result is defined
+              - "'PocketBase did not return a healthy 200' in (ansible_failed_result.msg | default(''))"
+            fail_msg: >-
+              failed, but not at the PocketBase reachability assertion:
+              {{ ansible_failed_result | default({}) }}
+            quiet: true
+        - name: Record the controlled failure
+          ansible.builtin.set_fact:
+            __pb_failed_cleanly: true
+    - name: The failure path was taken
+      ansible.builtin.assert:
+        that:
+          - __pb_failed_cleanly | default(false)
+        fail_msg: "cluster_pb_store did not fail cleanly on an unreachable PocketBase"
+        quiet: true

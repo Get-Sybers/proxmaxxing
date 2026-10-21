@@ -1,0 +1,32 @@
+---
+# Proxmox SDN desired state (cluster-sdn-zone creates the zone,
+# cluster-sdn-setup the VNets/ACLs and the master's NAT interface).
+sdn_zone: ludus
+# VXLAN underlay peers: every cluster node's management IP, read from
+# host_vars/<host>/node.yml (node.mgmt_ip) so the addresses have exactly one
+# home. Override per-run with -e cluster_peers=ip1,ip2,ip3 if ever needed.
+cluster_peers: "{{ groups['proxmox_cluster'] | map('extract', hostvars, ['node', 'mgmt_ip']) | join(',') }}"
+# The NAT VNet Ludus hands every range, and the per-range VNets.
+sdn_nat_vnet: ludusnat
+sdn_nat_vnet_tag: 16777215
+sdn_vxlan_tag_base: 0
+sdn_range_vnets:
+  - { number: 1, users_group: ludus_users }
+# Storage the range users are granted on.
+sdn_vm_storage_pool: "{{ ceph_pool }}"
+sdn_iso_storage_pool: local
+# The NAT address Ludus fixes for the ludusnat interface (it must match the
+# address in Ludus's own interfaces template), and the range routes that
+# leave through it. The uplink the NAT masquerades out of is per host:
+# sdn_nat_interface in host_vars/<master>/sdn.yml.
+sdn_nat_address: 192.0.2.254
+sdn_range_routes:
+  - { second_octet: 1 }
+  - { second_octet: 2 }
+# The files the NAT/dnsmasq play edits on the master (captured, restored).
+sdn_managed_files:
+  - /etc/network/interfaces
+  - "/etc/dnsmasq.d/dnsmasq-{{ sdn_nat_interface }}.conf"
+# The bridge name Ludus's stock dnsmasq config still refers to; the NAT play
+# repoints that config at the NAT VNet.
+sdn_legacy_bridge: vmbr1000

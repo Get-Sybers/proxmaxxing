@@ -1,0 +1,9 @@
+---
+cluster_patch_packer_iso_manifest: "{{ role_path }}/../../meta/iso-inventory.yml"
+cluster_patch_packer_iso_search_paths:
+  - /opt/ludus/packer
+  - /opt/ludus/users
+cluster_patch_packer_iso_storage_pool: local
+cluster_patch_packer_iso_apply: false
+cluster_patch_packer_iso_config_path: /opt/ludus/config.yml
+cluster_patch_packer_iso_iso_dir: /var/lib/vz/template/iso

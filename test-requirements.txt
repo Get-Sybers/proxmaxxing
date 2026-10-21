@@ -1,0 +1,8 @@
+tox==4.64.10
+tox-ansible==26.9.0
+molecule==26.9.0
+molecule-plugins[docker]==26.9.28
+pytest==9.1.1
+pytest-ansible==26.9.0
+pytest-xdist==3.8.0
+antsibull-changelog==0.35.1

@@ -1,0 +1,16 @@
+---
+# cluster_ludus_auth negative — the auth library reads the acting key only from
+# the environment (never from disk). With no LUDUS_API_KEY exported, its
+# require_caller_key gate must stop cleanly. LUDUS_API_KEY is pinned empty here
+# so the scenario is deterministic regardless of the controller's environment.
+# No prepare; converge drives the controlled failure itself.
+provisioner:
+  env:
+    LUDUS_API_KEY: ""
+scenario:
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - converge
+    - destroy

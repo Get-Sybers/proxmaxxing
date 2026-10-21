@@ -1,0 +1,41 @@
+---
+- name: Verify
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Fetch the whole line (no regex)
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_secrets
+        tasks_from: get
+      vars:
+        cluster_secrets_backend: file
+        cluster_secrets_request:
+          name: molecule-verify-plain
+          path: /etc/cluster-secrets-test.key
+          required: true
+    - name: The plain fetch returns the whole trimmed line
+      ansible.builtin.assert:
+        that:
+          - cluster_secrets_result.present | bool
+          - "cluster_secrets_result.value == 'api key: RA.TESTtoken_0123456789.abcDEF'"
+        fail_msg: "cluster_secrets (no regex) did not return the whole seeded line"
+        quiet: true
+    - name: Fetch again, extracting the RA.* token via regex
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_secrets
+        tasks_from: get
+      vars:
+        cluster_secrets_backend: file
+        cluster_secrets_request:
+          name: molecule-verify-regex
+          path: /etc/cluster-secrets-test.key
+          regex: 'RA\.[A-Za-z0-9._+/=-]+'
+          required: true
+    - name: The regex fetch extracts exactly the RA.* token
+      ansible.builtin.assert:
+        that:
+          - cluster_secrets_result.present | bool
+          - cluster_secrets_result.value == 'RA.TESTtoken_0123456789.abcDEF'
+        fail_msg: "cluster_secrets did not extract the RA.* token via regex"
+        quiet: true

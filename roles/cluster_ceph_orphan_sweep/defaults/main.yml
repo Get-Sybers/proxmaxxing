@@ -1,0 +1,6 @@
+---
+# The RBD pool to sweep: the cluster's guest pool, read from the collection
+# variable the inventory defines (standards §4d).
+cluster_ceph_orphan_sweep_pool: "{{ ceph_pool }}"
+cluster_ceph_orphan_sweep_preview_only: true
+cluster_ceph_orphan_sweep_delegate_to: localhost

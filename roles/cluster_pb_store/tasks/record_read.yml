@@ -1,0 +1,27 @@
+---
+- name: "record_read | Fetch the record by name"
+  ansible.builtin.uri:
+    url: >-
+      {{ cluster_pb_store_base_url }}/api/collections/{{ cluster_pb_store_collection_name
+      }}/records?filter={{ ("name='" ~ cluster_pb_store_record_name ~ "'") | urlencode }}
+    method: GET
+    headers:
+      Authorization: "{{ __pb_super_token }}"
+    validate_certs: "{{ cluster_pb_store_validate_certs }}"
+    status_code: [200]
+  register: __pb_record_read
+  no_log: true
+  check_mode: false
+  changed_when: false
+- name: "record_read | Derive found/value facts (value no_log)"
+  ansible.builtin.set_fact:
+    __pb_record_found: "{{ (__pb_record_read.json['items'] | length) > 0 }}"
+    __pb_record_found_id: "{{ (__pb_record_read.json['items'] | first | default({})).id | default('') }}"
+    __pb_record_read_value: "{{ (__pb_record_read.json['items'] | first | default({})).value | default('') }}"
+  no_log: true
+- name: "record_read | Report SHAPE only (hashed label, never the name)"
+  ansible.builtin.debug:
+    msg: >-
+      Record sha256:{{ cluster_pb_store_record_name | hash('sha256') | truncate(12, true, '') }}:
+      found={{ __pb_record_found }},
+      value length={{ __pb_record_read_value | length }}.

@@ -1,0 +1,11 @@
+---
+# cluster_patch_packer_iso negative — pointed at a manifest that does not exist,
+# the role must refuse rather than guess an ISO name. No prepare; converge drives
+# the controlled failure itself.
+scenario:
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - converge
+    - destroy

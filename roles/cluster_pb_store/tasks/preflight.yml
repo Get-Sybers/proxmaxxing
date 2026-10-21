@@ -1,0 +1,51 @@
+---
+- name: "preflight | Probe the PB health endpoint"
+  ansible.builtin.uri:
+    url: "{{ cluster_pb_store_base_url }}/api/health"
+    method: GET
+    validate_certs: "{{ cluster_pb_store_validate_certs }}"
+    status_code: [200]
+  register: __pb_health
+  check_mode: false
+  changed_when: false
+  # A transport failure (refused/timeout/DNS) must become a clean diagnostic at
+  # the assert below, not an uncaught uri crash. -1 status is captured, not raised.
+  failed_when: false
+- name: "preflight | Assert PocketBase is reachable and healthy"
+  ansible.builtin.assert:
+    that:
+      - (__pb_health.status | default(-1)) == 200
+    fail_msg: >-
+      PocketBase did not return a healthy 200 at
+      {{ cluster_pb_store_base_url }}/api/health (got
+      {{ __pb_health.status | default('unreachable') }}:
+      {{ __pb_health.msg | default('no response') }}). Check cluster_pb_store_base_url,
+      that the ludus service is running, and network reachability, then re-run.
+    success_msg: "PocketBase is reachable and healthy (HTTP 200 at /api/health)."
+    quiet: true
+- name: "preflight | Probe the superadmin surface"
+  ansible.builtin.uri:
+    url: "{{ cluster_pb_store_base_url }}/admin/"
+    method: GET
+    validate_certs: "{{ cluster_pb_store_validate_certs }}"
+    status_code: [200, 403]
+  register: __pb_admin_probe
+  check_mode: false
+  changed_when: false
+  # Reachability is already proven above; keep a non-200/403 or a transient
+  # transport blip as a controlled value for the gate assert rather than a crash.
+  failed_when: false
+- name: "preflight | Assert the superadmin gate is set"
+  ansible.builtin.assert:
+    that: (__pb_admin_probe.status | default(-1)) == 200
+    fail_msg: >-
+      The PocketBase superadmin surface at {{ cluster_pb_store_base_url }}/admin/
+      answered HTTP {{ __pb_admin_probe.status }} — LUDUS_ENABLE_SUPERADMIN is
+      not set. This play asserts the gate, it does not manage it (operator
+      decision). Documented enable procedure
+      (docs/administration/pocketbase.md):
+      `systemctl set-environment LUDUS_ENABLE_SUPERADMIN=ill-be-careful`
+      then `systemctl restart ludus`, and re-run this play.
+    success_msg: >-
+      PB healthy and the superadmin surface is served (HTTP 200 at /admin/).
+    quiet: true

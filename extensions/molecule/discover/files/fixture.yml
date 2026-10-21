@@ -1,0 +1,145 @@
+---
+# What the operator wrote (hand values and annotations the node cannot report).
+node:
+  name: cluster-instance
+  kernel: 6.14-old
+  hardware:
+    cpu: Old CPU
+    cpus: 24
+  disks:
+    - dev: nvme0n1
+      size: 3.6T
+      role: rpool (ZFS root)
+    - dev: sda
+      size: 3.6T
+      role: tank (ZFS)
+  network:
+    vmbr0:
+      ip: 192.0.2.10/24
+      role: mgmt/LAN
+  guests:
+    vms:
+      - id: 9400
+        name: Home-Velo
+        status: running
+cluster:
+  name: molecule-cluster
+  config_version: 1
+  storage:
+    - id: local
+      type: dir
+      note: hand annotation
+  pools:
+    - id: ADMIN
+      comment: VMs managed by the admin
+      members: [9400]
+
+# What the node reports.
+cluster_discover_node_facts:
+  name: cluster-instance
+  mgmt_ip: 192.0.2.10
+  corosync_id: 1
+  quorum_votes: 1
+  pve_version: pve-manager/9.2.9/aa93fdab516e230b
+  kernel: 7.0.14-8-pve
+  hardware:
+    cpu: Intel Core Ultra 9 275HX
+    cpus: 24
+    mem_total_mb: 128000
+  disks:
+    - dev: nvme0n1
+      size: 3.6T
+      model: CT4000P3PSSD8
+      serial: 2404E8A1B2C3
+    - dev: nvme1n1
+      size: 3.6T
+      model: CT4000P3PSSD8
+      serial: 2404E8A1B2C4
+  zfs_pools:
+    - name: rpool
+      size: 3.62T
+      cap: 48%
+      health: ONLINE
+  network:
+    vmbr0:
+      ip: 192.0.2.10/24
+      type: bridge
+      ports: [nic0]
+      mtu: 1500
+      state: UP
+    dummy0:
+      ip: 203.0.113.1/32
+      type: dummy
+      mtu: 9000
+      state: UNKNOWN
+  guests:
+    templates:
+      - id: 100
+        name: debian-12
+        status: stopped
+    vms:
+      - id: 9400
+        name: Home-Velo
+        status: stopped
+      - id: 9509
+        name: for509-sof-elk
+        status: stopped
+    cts: []
+cluster_discover_ceph_nodes:
+  cluster-instance:
+    roles: [mon, mgr-active, osd]
+    mon_addr: 203.0.113.1
+    osds: [osd.0]
+cluster_discover_cluster_facts:
+  name: molecule-cluster
+  config_version: 2
+  quorate: true
+  nodes:
+    - name: cluster-instance
+      id: 1
+      votes: 1
+      ip: 192.0.2.10
+  ceph:
+    fsid: 8ffdef63-1eb6-45a3-a4dc-fc0455ef363b
+    release: squid
+    health: HEALTH_OK
+    mons:
+      - name: cluster-instance
+        addr: 203.0.113.1
+    pools:
+      - name: ludus-ceph
+        size: 2
+        min_size: 2
+        pg_num: 32
+  storage:
+    - id: local
+      type: dir
+      content: iso,vztmpl
+      path: /var/lib/vz
+      shared: false
+      enabled: true
+    - id: ludus-ceph
+      type: rbd
+      content: images,rootdir
+      path: ludus-ceph
+      shared: true
+      enabled: true
+  users: [root@pam]
+  groups: []
+  pools:
+    - id: ADMIN
+      comment: VMs managed by the Ludus admin
+      members: [9400, 9509]
+  roles: [Administrator, NoAccess]
+  realms:
+    - realm: pam
+      type: pam
+      comment: Linux PAM
+  sdn:
+    zones: []
+    vnets: []
+    subnets: []
+    controllers: []
+    ipams: []
+    fabrics: []
+  directory_mapping: []

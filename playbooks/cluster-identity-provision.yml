@@ -1,0 +1,101 @@
+---
+- name: "Ensure the Cluster-Admin and Infra-Admin seats"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: "Refuse --check"
+      ansible.builtin.assert:
+        that: not ansible_check_mode
+        fail_msg: >-
+          User creation is a transactional Ludus operation (PB + PAM + Proxmox)
+          that check mode cannot simulate and must not half-run. Re-run
+          without --check.
+        quiet: true
+    - name: "Cluster admission gate"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_preflight
+    - name: "Fetch the ROOT key from the vault (cluster_secrets)"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_secrets
+        tasks_from: ludus_root_key
+    - name: "List all Ludus users"
+      ansible.builtin.uri:
+        url: "{{ identity_api_url }}/user/all"
+        method: GET
+        headers:
+          X-API-KEY: "{{ cluster_secrets_ludus_root_api_key }}"
+        validate_certs: "{{ identity_validate_certs }}"
+        status_code: [200]
+      register: __users_all
+      no_log: true
+      check_mode: false
+      changed_when: false
+    - name: "Derive the existing userID list (non-secret)"
+      ansible.builtin.set_fact:
+        __existing_user_ids: "{{ __users_all.json | map(attribute='userID') | list }}"
+    - name: "Report"
+      ansible.builtin.debug:
+        msg: >-
+          Existing Ludus userIDs: {{ __existing_user_ids | join(', ') }}.
+          To create: {{ identity_seats | map(attribute='user_id')
+          | reject('in', __existing_user_ids) | list | join(', ') | default('nothing', true) }}.
+    - name: "Add missing admin users via the ludus-admin API"
+      ansible.builtin.uri:
+        url: "{{ identity_admin_api_url }}/user"
+        method: POST
+        headers:
+          X-API-KEY: "{{ cluster_secrets_ludus_root_api_key }}"
+        body_format: json
+        body:
+          name: "{{ item.name }}"
+          userID: "{{ item.user_id }}"
+          email: "{{ item.email }}"
+          isAdmin: true
+        validate_certs: "{{ identity_validate_certs }}"
+        status_code: [201]
+      loop: "{{ identity_seats }}"
+      when: item.user_id not in __existing_user_ids
+      register: __identity_create
+      no_log: true
+      changed_when: true
+    - name: "Scrub the creation responses (statuses only)"
+      ansible.builtin.set_fact:
+        __identity_create: >-
+          {{ dict(identity_seats | map(attribute='user_id') | zip(
+               __identity_create.results
+               | map(attribute='status', default='skipped-existing') | list)) }}
+      no_log: true
+    - name: "Report creation outcomes (non-secret)"
+      ansible.builtin.debug:
+        msg: "Creation outcomes: {{ __identity_create }}"
+    - name: "Re-list all Ludus users"
+      ansible.builtin.uri:
+        url: "{{ identity_api_url }}/user/all"
+        method: GET
+        headers:
+          X-API-KEY: "{{ cluster_secrets_ludus_root_api_key }}"
+        validate_certs: "{{ identity_validate_certs }}"
+        status_code: [200]
+      register: __users_after
+      no_log: true
+      check_mode: false
+      changed_when: false
+    - name: "Derive the seat states (userID + isAdmin only)"
+      ansible.builtin.set_fact:
+        __seat_states: >-
+          {{ __users_after.json
+             | selectattr('userID', 'in', identity_seats | map(attribute='user_id') | list)
+             | map('dict2items') | map('selectattr', 'key', 'in', ['userID', 'isAdmin'])
+             | map('items2dict') | list }}
+    - name: "Both seats exist and are admins"
+      ansible.builtin.assert:
+        that:
+          - __seat_states | length == identity_seats | length
+          - __seat_states | map(attribute='isAdmin') | select | list | length == identity_seats | length
+        fail_msg: >-
+          Seat verification failed: {{ __seat_states }} — expected CA and IA
+          present with isAdmin=true. Inspect with `ludus user list` (as RA —
+          authenticate via ludus-ra-auth.yml first).
+        success_msg: "Seats verified: {{ __seat_states }}."
+        quiet: true

@@ -1,0 +1,10 @@
+---
+# Default scenario — get_sybers.cluster.cluster_secrets (file backend), Tier A.
+#
+# The driver (docker), the Debian substrate (../Dockerfile), the provisioner, the
+# verifier and the full converge -> idempotence -> verify sequence all come from
+# ../config.yml. This scenario's behaviour lives in prepare.yml (seed a real
+# 0600 secret file), converge.yml (fetch it through the role) and verify.yml
+# (assert the value and that a second converge is idempotent). Nothing to
+# override here.
+{}

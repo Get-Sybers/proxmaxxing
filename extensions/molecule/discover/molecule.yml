@@ -1,0 +1,8 @@
+---
+# cluster_discover positive — the render stage (merge + write) against a
+# committed fixture: the records as an operator wrote them plus what a node
+# reports. Converge fills the records in place inside the container, the
+# idempotence step proves a second fill rewrites nothing, and verify asserts
+# the fill and overwrite semantics on the written files. Gathering itself needs
+# a live PVE node and is exercised by the play, not faked here.
+{}

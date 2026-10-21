@@ -1,0 +1,24 @@
+---
+- name: "dek_read | Read the Ludus server config (root-only)"
+  ansible.builtin.slurp:
+    src: "{{ cluster_ludus_auth_config_path }}"
+  register: __cla_cfg
+  no_log: true
+  check_mode: false
+- name: "dek_read | Derive the database_encryption_key in force"
+  ansible.builtin.set_fact:
+    __cla_dek: >-
+      {{ (__cla_cfg.content | b64decode | from_yaml).database_encryption_key
+         | default('', true) or cluster_ludus_auth_dek_public_default }}
+  no_log: true
+- name: "dek_read | Refuse the public default database_encryption_key (#173)"
+  ansible.builtin.assert:
+    that:
+      - (__cla_dek | length) == 32
+      - __cla_dek != cluster_ludus_auth_dek_public_default
+    fail_msg: >-
+      Ludus is still running on the PUBLIC default database_encryption_key
+      (or the configured key is not 32 bytes). Credentials sealed under it
+      prove nothing — run playbooks/cluster-dek-rotate.yml first.
+    quiet: true
+  no_log: true

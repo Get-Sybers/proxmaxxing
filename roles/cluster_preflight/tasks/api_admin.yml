@@ -1,0 +1,59 @@
+---
+- name: "api_admin | Derive NON-SECRET facts about the environment key"
+  ansible.builtin.set_fact:
+    __cpf_key_present: "{{ (lookup('env', 'LUDUS_API_KEY') | default('', true) | trim | length) > 0 }}"
+- name: "api_admin | Assert an API key is present in the environment"
+  ansible.builtin.assert:
+    that: __cpf_key_present | bool
+    fail_msg: >-
+      The API-admin check was requested but LUDUS_API_KEY is not in the
+      environment. cluster_preflight NEVER reads key files. Authenticate
+      first — get_sybers.cluster playbooks/ludus-ra-auth.yml proves the
+      PocketBase-homed RA key and arms the ludus CLI — then export
+      LUDUS_API_KEY into this shell (roles/cluster_ludus_auth/README.md) and re-run.
+    quiet: true
+- name: "api_admin | Verify the key against /whoami"
+  ansible.builtin.uri:
+    url: "{{ cluster_preflight_api_url }}/whoami"
+    method: GET
+    validate_certs: false
+    headers:
+      X-API-KEY: "{{ lookup('env', 'LUDUS_API_KEY') }}"
+    status_code: [200, 401, 403]
+    return_content: true
+  register: __cpf_whoami
+  failed_when: false
+  no_log: true
+  check_mode: false
+  delegate_to: "{{ cluster_preflight_delegate_to }}"
+- name: "api_admin | Derive the NON-SECRET identity result"
+  ansible.builtin.set_fact:
+    cluster_preflight_auth_status: "{{ __cpf_whoami.status | default(0) }}"
+    cluster_preflight_auth_user: >-
+      {{ ((__cpf_whoami.content | from_json).user.userID | default(''))
+         if ((__cpf_whoami.status | default(0) | int) == 200
+             and (__cpf_whoami.content | default('') | trim).startswith('{'))
+         else '' }}
+    cluster_preflight_auth_admin: >-
+      {{ ((__cpf_whoami.content | from_json).user.isAdmin | default(false) | bool)
+         if ((__cpf_whoami.status | default(0) | int) == 200
+             and (__cpf_whoami.content | default('') | trim).startswith('{'))
+         else false }}
+  no_log: true
+- name: "api_admin | Assert the key is live and belongs to an admin"
+  ansible.builtin.assert:
+    that:
+      - cluster_preflight_auth_status | int == 200
+      - cluster_preflight_auth_admin | bool
+    fail_msg: >-
+      The Ludus API did not accept the environment key as an admin
+      (HTTP {{ cluster_preflight_auth_status }},
+      userID={{ cluster_preflight_auth_user | default('?', true) }},
+      isAdmin={{ cluster_preflight_auth_admin }}). A rejected key means the
+      copy you were handed is stale — mint a fresh one with get_sybers.cluster
+      playbooks/ludus-key-rotate.yml. A non-admin identity cannot run
+      cluster plays at all.
+    success_msg: >-
+      Authenticated to the Ludus API as
+      userID={{ cluster_preflight_auth_user }} (admin).
+    quiet: true

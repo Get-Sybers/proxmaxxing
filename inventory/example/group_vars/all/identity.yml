@@ -1,0 +1,12 @@
+---
+# cluster-identity-provision: the admin seats every cluster needs.
+identity_api_url: "{{ ludus_api }}"
+identity_admin_api_url: "https://127.0.0.1:8081/api/v2"
+identity_validate_certs: false
+identity_seats:
+  - user_id: CA
+    name: Cluster-Admin
+    email: cluster-admin@ludus.internal
+  - user_id: IA
+    name: Infra-Admin
+    email: infra-admin@ludus.internal

@@ -1,0 +1,86 @@
+---
+- name: "config | The server config file must exist"
+  ansible.builtin.stat:
+    path: "{{ cluster_ludus_install_root }}/config.yml"
+  register: __clc_cfg
+
+- name: "config | Fail clearly when config.yml is absent"
+  ansible.builtin.assert:
+    that: __clc_cfg.stat.exists
+    fail_msg: >-
+      {{ cluster_ludus_install_root }}/config.yml does not exist. The installer
+      writes it on first run — install Ludus (or enable
+      cluster_ludus_install_run_installer) before reconciling its config.
+    quiet: true
+
+- name: "config | Read config.yml to capture the encryption key (never rewritten)"
+  ansible.builtin.slurp:
+    src: "{{ cluster_ludus_install_root }}/config.yml"
+  register: __clc_before_raw
+  no_log: true
+
+- name: "config | Remember the database_encryption_key line before any edit"
+  ansible.builtin.set_fact:
+    __clc_dek_before: >-
+      {{ (__clc_before_raw.content | b64decode)
+         | regex_search('(?m)^database_encryption_key:.*$') | default('', true) }}
+  no_log: true
+
+- name: "config | Build the set of keys to reconcile (network keys only on opt-in)"
+  ansible.builtin.set_fact:
+    __clc_keys: >-
+      {{ cluster_ludus_install_managed_keys
+         + (cluster_ludus_install_network_keys if cluster_ludus_install_manage_network | bool else []) }}
+
+- name: "config | Reconcile each managed key, preserving every other line"
+  ansible.builtin.lineinfile:
+    path: "{{ cluster_ludus_install_root }}/config.yml"
+    regexp: "^{{ item.key | regex_escape }}:"
+    line: "{{ item.key }}: {{ item.value }}"
+    insertafter: EOF
+    backup: true
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ __clc_keys }}"
+  loop_control:
+    label: "{{ item.key }}"
+  notify: "Restart ludus services"
+
+- name: "config | Re-read config.yml to verify the result on disk"
+  ansible.builtin.slurp:
+    src: "{{ cluster_ludus_install_root }}/config.yml"
+  register: __clc_after_raw
+  no_log: true
+
+- name: "config | Decode the reconciled config once"
+  ansible.builtin.set_fact:
+    __clc_after: "{{ __clc_after_raw.content | b64decode }}"
+  no_log: true
+
+- name: "config | The database_encryption_key must be untouched"
+  ansible.builtin.assert:
+    that: >-
+      (__clc_after | regex_search('(?m)^database_encryption_key:.*$') | default('', true))
+      == __clc_dek_before
+    fail_msg: >-
+      database_encryption_key changed during reconcile. That key decrypts every
+      stored credential; rewriting it bricks the server. Refusing to continue —
+      restore {{ cluster_ludus_install_root }}/config.yml from the .bak this run
+      created.
+    quiet: true
+
+- name: "config | Every managed key is present with the enforced value on disk"
+  ansible.builtin.assert:
+    that: >-
+      __clc_after is search('(?m)^' ~ (item.key | regex_escape) ~ ':\s*'
+                            ~ (item.value | regex_escape) ~ '\s*$')
+    fail_msg: >-
+      {{ item.key }} is not '{{ item.value }}' in config.yml after reconcile.
+    quiet: true
+  loop: "{{ __clc_keys }}"
+  loop_control:
+    label: "{{ item.key }}"
+  # Under --check lineinfile only simulates, so the re-read still shows the
+  # pre-write file; skip the on-disk assertion rather than false-fail.
+  when: not ansible_check_mode

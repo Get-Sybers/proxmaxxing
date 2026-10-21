@@ -1,0 +1,54 @@
+---
+# Ceph storage mesh (OpenFabric over the fast links) — consumed by
+# cluster-ceph-mesh.yml. This is a cluster-wide graph: each node needs every
+# peer's loopback + LAN fallback to build full-mesh routes, so it lives here
+# rather than split across host_vars. Per-host physical links are in
+# host_vars/<host>/storage_net.yml.
+#
+# The example is a three-node mesh: pi-01 has a Thunderbolt link to pi-03 and a
+# copper link to pi-02. 198.51.100.0/24 (the loopbacks) is an RFC 5737
+# documentation range standing in for your mesh prefix; the LAN addresses are
+# each node's mgmt_ip. Copied into place by `make config`; the copy is untracked.
+mesh_prefix: "198.51.100.0/24"
+mesh:
+  pi-01:
+    loopback: 198.51.100.1
+    net_id: 49.0000.0000.0001.00
+    lan_ip: 192.0.2.10
+    ifaces:
+      - {name: thunderbolt0, metric: 10, role: "TB to pi-03"}
+      - {name: nic1, metric: 10, role: "Cat6 to pi-02"}
+  pi-02:
+    loopback: 198.51.100.2
+    net_id: 49.0000.0000.0002.00
+    lan_ip: 192.0.2.11
+    ifaces:
+      - {name: nic0, metric: 10, role: "Cat6 to pi-01"}
+  pi-03:
+    loopback: 198.51.100.3
+    net_id: 49.0000.0000.0003.00
+    lan_ip: 192.0.2.12
+    ifaces:
+      - {name: thunderbolt0, metric: 10, role: "TB to pi-01"}
+# Which local interface each peer loopback must egress on (the fast-path check).
+expected_egress:
+  pi-01: {"198.51.100.2": nic1, "198.51.100.3": thunderbolt0}
+  pi-02: {"198.51.100.1": nic0, "198.51.100.3": nic0}
+  pi-03: {"198.51.100.1": thunderbolt0, "198.51.100.2": thunderbolt0}
+# The files the mesh play writes on every node (captured before, restored on
+# failure).
+mesh_managed_files:
+  - /etc/sysctl.d/90-storage-mesh.conf
+  - /etc/network/interfaces.d/storage-mesh
+  - /etc/frr/daemons
+  - /etc/frr/frr.conf
+# The dotted host-prefix of the mesh ("198.51.100.") and of the LAN, for the
+# bind checks (a mon/OSD must bind the former and never the latter).
+mesh_host_prefix: "{{ mesh_prefix.split('/')[0].rsplit('.', 1)[0] ~ '.' }}"
+mesh_lan_prefix: "{{ cluster_lan_prefix }}"
+# The interface on the master whose byte counters prove replication rides the
+# copper link during the post-cutover bench.
+mesh_bench_iface: nic1
+# The disruptive Ceph cutover (rebind mons/OSDs onto the mesh) never runs
+# unless asked: -e apply_ceph_mesh_cutover=true.
+apply_ceph_mesh_cutover: false

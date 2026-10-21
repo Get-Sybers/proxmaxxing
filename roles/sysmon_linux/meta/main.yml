@@ -1,0 +1,19 @@
+---
+galaxy_info:
+  role_name: sysmon_linux
+  namespace: get_sybers
+  author: Get-Sybers
+  description: >-
+    Install, configure, and verify Sysmon for Linux (sysmonforlinux +
+    sysinternalsebpf) on Proxmox cluster nodes via a push-model supply-chain
+    gate. Artefacts are digest-gated by the caller (Play 1 of
+    cluster-audit-logging.yml) and pushed from the controller; no node needs
+    a route to Nexus or packages.microsoft.com.
+  company: Get-Sybers
+  license: AGPL-3.0-only
+  min_ansible_version: "2.19.0"
+  platforms:
+    - name: Debian
+      versions: [trixie]
+  galaxy_tags: [sysmon, security, cluster, proxmox, ebpf]
+dependencies: []

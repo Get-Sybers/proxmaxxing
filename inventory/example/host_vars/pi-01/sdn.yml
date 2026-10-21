@@ -1,0 +1,6 @@
+---
+# SDN values that are specific to the master node (cluster-sdn-setup.yml, the
+# host NAT half): the physical uplink the ludusnat traffic masquerades out of
+# and that Ludus's dnsmasq instance is named after. CHANGE-ME to the NIC under
+# the management bridge (`ip -br link` on the master).
+sdn_nat_interface: CHANGE-ME

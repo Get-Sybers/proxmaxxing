@@ -1,0 +1,22 @@
+---
+- name: "require_caller_key | Adopt the exported LUDUS_API_KEY as the acting key"
+  ansible.builtin.set_fact:
+    __cla_api_key: "{{ lookup('env', 'LUDUS_API_KEY') | default('', true) | trim }}"
+  no_log: true
+- name: "require_caller_key | Derive NON-SECRET facts about the caller's key"
+  ansible.builtin.set_fact:
+    __cla_caller_len: "{{ __cla_api_key | length }}"
+    __cla_caller_identity: "{{ (__cla_api_key.split('.') | first) if ('.' in __cla_api_key) else '' }}"
+  no_log: true
+- name: "require_caller_key | Require an exported admin key (authentication comes from the API)"
+  ansible.builtin.assert:
+    that: __cla_caller_len | int > 20
+    fail_msg: >-
+      No LUDUS_API_KEY exported. This play reads the credential ONLY from the
+      Ludus/PocketBase API — it never reads a key file from disk — so you must
+      first export an admin key (Ludus's own headless mechanism):
+      export LUDUS_API_KEY=<an admin key>   (an admin identity).
+      With that in the environment, the play fetches and proves the target
+      identity's key over the API (roles/cluster_ludus_auth/README.md).
+    success_msg: "Caller key adopted from the environment (length {{ __cla_caller_len }})."
+    quiet: true

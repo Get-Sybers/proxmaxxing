@@ -1,0 +1,28 @@
+---
+- name: "collection_update_rules | Report the drift (current vs desired)"
+  ansible.builtin.debug:
+    msg:
+      - "Rules drift on '{{ cluster_pb_store_collection_name }}' — reconciling:"
+      - "listRule:   current={{ __pb_col_probe.json.listRule | string }} desired={{ cluster_pb_store_collection_rules.listRule | string }}"
+      - "viewRule:   current={{ __pb_col_probe.json.viewRule | string }} desired={{ cluster_pb_store_collection_rules.viewRule | string }}"
+      - "createRule: current={{ __pb_col_probe.json.createRule | string }} desired={{ cluster_pb_store_collection_rules.createRule | string }}"
+      - "updateRule: current={{ __pb_col_probe.json.updateRule | string }} desired={{ cluster_pb_store_collection_rules.updateRule | string }}"
+      - "deleteRule: current={{ __pb_col_probe.json.deleteRule | string }} desired={{ cluster_pb_store_collection_rules.deleteRule | string }}"
+- name: "collection_update_rules | PATCH the five API rules"
+  ansible.builtin.uri:
+    url: "{{ cluster_pb_store_base_url }}/api/collections/{{ cluster_pb_store_collection_name }}"
+    method: PATCH
+    headers:
+      Authorization: "{{ __pb_super_token }}"
+    body_format: json
+    body: "{{ cluster_pb_store_collection_rules }}"
+    validate_certs: "{{ cluster_pb_store_validate_certs }}"
+    status_code: [200]
+  register: __pb_col_patch
+  no_log: true
+  changed_when: true
+- name: "collection_update_rules | Report"
+  ansible.builtin.debug:
+    msg: >-
+      Rules on '{{ cluster_pb_store_collection_name }}' reconciled
+      (HTTP {{ __pb_col_patch.status }}).

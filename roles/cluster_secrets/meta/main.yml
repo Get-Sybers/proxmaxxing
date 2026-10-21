@@ -1,0 +1,15 @@
+---
+galaxy_info:
+  role_name: cluster_secrets
+  namespace: get_sybers
+  author: Get-Sybers
+  description: >-
+    Retrieve a secret from the house credential store — file or keychain backend — under no_log.
+  company: Get-Sybers
+  license: AGPL-3.0-only
+  min_ansible_version: "2.19.0"
+  platforms:
+    - name: Debian
+      versions: [bookworm, trixie]
+  galaxy_tags: [secrets, vault, credentials]
+dependencies: []

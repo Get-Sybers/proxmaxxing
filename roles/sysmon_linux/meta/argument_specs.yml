@@ -1,0 +1,59 @@
+---
+argument_specs:
+  main:
+    short_description: "Install, configure, and enable Sysmon for Linux on a cluster node from caller-staged, digest-gated .debs."
+    description:
+      - >-
+        Pushes the caller-staged .debs to the node, re-verifies their sha256 on
+        the node, installs sysinternalsebpf then sysmonforlinux via apt, renders
+        and deploys the Sysmon config, and enables the service. The caller must
+        stage the digest-gated artefacts before this role runs.
+    options:
+      sysmon_linux_artefacts:
+        type: list
+        required: false
+        default: []
+        description: "Artefact list [{name, version, sha256, deb}] in install order. Caller MUST supply it; the empty default fails loudly."
+      sysmon_linux_stage_dir:
+        type: str
+        required: false
+        default: "/var/cache/sysmon-linux"
+        description: "On-controller staging directory the caller wrote the digest-gated .debs to; this role reads them here."
+      sysmon_linux_node_stage_dir:
+        type: str
+        required: false
+        default: "/var/cache/sysmon-linux"
+        description: "On-node staging directory the artefacts are pushed to."
+      sysmon_linux_config_path:
+        type: str
+        required: false
+        default: "/etc/sysmon/config.xml"
+        description: "Config file path on each cluster node."
+      sysmon_linux_schema_version:
+        type: str
+        required: false
+        default: "4.90"
+        description: "Sysmon schema version — must match the sysmonforlinux build being installed."
+      sysmon_linux_hash_algorithms:
+        type: str
+        required: false
+        default: "sha256"
+        description: "Hash algorithm(s) recorded in each event."
+      sysmon_linux_excluded_dest_prefixes:
+        type: list
+        required: false
+        default:
+          - "127."
+          - "::1"
+        description: "NetworkConnect destination prefixes excluded from events (loopback by default; add the site's intra-cluster networks)."
+      sysmon_linux_watched_paths:
+        type: list
+        required: false
+        default:
+          - /etc/
+          - /root/.ssh/
+          - /usr/local/sbin/
+          - /usr/local/bin/
+          - /var/spool/cron/
+          - /lib/systemd/system/
+        description: "FileCreate/FileDelete paths that fire events (integrity-relevant only)."

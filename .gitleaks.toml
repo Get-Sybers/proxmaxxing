@@ -1,0 +1,11 @@
+# gitleaks — get-sybers standard (docs/04): extend the default rule set, never
+# replace it. The allowlist covers only committed test fixtures, which carry no
+# live credential.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Committed test fixtures."
+paths = [
+  '''extensions/molecule/.*''',
+]

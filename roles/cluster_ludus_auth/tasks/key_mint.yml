@@ -1,0 +1,31 @@
+---
+- name: "key_mint | Mint a new API key for the target user (admin API)"
+  ansible.builtin.uri:
+    url: "{{ cluster_ludus_auth_api_url }}/user/apikey?userID={{ cluster_ludus_auth_mint_target }}"
+    method: GET
+    validate_certs: false
+    headers:
+      X-API-KEY: "{{ __cla_api_key }}"
+    status_code: [200, 201]
+    return_content: true
+  register: __cla_minted
+  no_log: true
+- name: "key_mint | Extract the minted key (both response shapes)"
+  ansible.builtin.set_fact:
+    __cla_new_key: >-
+      {{ (__cla_minted.content | from_json).result.apiKey
+         | default((__cla_minted.content | from_json).apiKey | default('')) }}
+  no_log: true
+- name: "key_mint | Assert a plausible target key came back (wrong-target guard)"
+  ansible.builtin.assert:
+    that:
+      - __cla_new_key | length > 0
+      - __cla_new_key is match('^' ~ (cluster_ludus_auth_mint_target | regex_escape) ~ '\.')
+      - __cla_new_key != __cla_api_key
+    fail_msg: >-
+      The API returned no key, or a key not prefixed
+      '{{ cluster_ludus_auth_mint_target }}.' — the mint may have targeted
+      the CALLER instead of {{ cluster_ludus_auth_mint_target }}. Do not
+      persist; re-check the caller identity and re-run.
+    quiet: true
+  no_log: true

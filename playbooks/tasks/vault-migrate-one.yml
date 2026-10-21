@@ -1,0 +1,99 @@
+---
+- name: "vault-migrate-one | Read the vault entry through cluster_secrets"
+  ansible.builtin.include_role:
+    name: get_sybers.cluster.cluster_secrets
+    tasks_from: get
+  vars:
+    cluster_secrets_backend: file
+    cluster_secrets_request:
+      name: "{{ item.label }}"
+      path: "{{ item.path }}"
+      required: true
+- name: "vault-migrate-one | Keep the plaintext and its fingerprint (no_log)"
+  ansible.builtin.set_fact:
+    __vm_plain: "{{ cluster_secrets_result.value }}"
+    __vm_plain_sha: "{{ cluster_secrets_result.value | hash('sha256') }}"
+  no_log: true
+- name: "vault-migrate-one | Encrypt under Ludus's CURRENT database_encryption_key"
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ __vm_helper }}"
+  args:
+    stdin: >-
+      {{ {'op': 'encrypt', 'key': __vm_dek, 'data': (__vm_plain | b64encode)}
+         | to_json }}
+    stdin_add_newline: false
+  register: __vm_ct
+  no_log: true
+  check_mode: false
+  changed_when: false
+- name: "vault-migrate-one | Is this entry already in the collection?"
+  ansible.builtin.include_role:
+    name: get_sybers.cluster.cluster_pb_store
+    tasks_from: record_read
+  vars:
+    cluster_pb_store_record_name: "{{ item.name }}"
+- name: "vault-migrate-one | Remember whether it existed (non-secret)"
+  ansible.builtin.set_fact:
+    __vm_existing_id: "{{ __pb_record_found_id }}"
+    __vm_existed: "{{ __pb_record_found | bool }}"
+- name: "vault-migrate-one | Write it into gs_infra_credentials"
+  ansible.builtin.include_tasks: vault-migrate-write.yml
+- name: "vault-migrate-one | Read it back (never trust the write)"
+  ansible.builtin.include_role:
+    name: get_sybers.cluster.cluster_pb_store
+    tasks_from: record_read
+  vars:
+    cluster_pb_store_record_name: "{{ item.name }}"
+- name: "vault-migrate-one | Decrypt what was actually persisted"
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ __vm_helper }}"
+  args:
+    stdin: >-
+      {{ {'op': 'decrypt', 'key': __vm_dek, 'data': __pb_record_read_value}
+         | to_json }}
+    stdin_add_newline: false
+  register: __vm_readback
+  no_log: true
+  check_mode: false
+  changed_when: false
+- name: "vault-migrate-one | Assert the round trip is byte-identical"
+  ansible.builtin.assert:
+    that:
+      - __pb_record_found | bool
+      - (__vm_readback.stdout | b64decode | hash('sha256')) == __vm_plain_sha
+    fail_msg: >-
+      MIGRATION ROUND-TRIP FAILED for entry {{ item.label }}: the value stored
+      in gs_infra_credentials does not decrypt back to the bytes read from the
+      vault. The vault copy is UNTOUCHED (this play never deletes), so nothing
+      is lost — but do NOT run the removal step until this is understood.
+    success_msg: >-
+      Entry {{ item.label }} migrated and verified: stored ciphertext decrypts
+      to the identical plaintext.
+    quiet: true
+  no_log: true
+- name: "vault-migrate-one | Forget the in-memory plaintext"
+  ansible.builtin.set_fact:
+    __vm_plain: ""
+  no_log: true
+- name: "vault-migrate-one | Forget the cluster_secrets fact too"
+  ansible.builtin.include_role:
+    name: get_sybers.cluster.cluster_secrets
+    tasks_from: forget
+- name: "vault-migrate-one | Record the outcome (hashed label + shape only)"
+  ansible.builtin.set_fact:
+    __vm_migrated: >-
+      {{ __vm_migrated | default([]) + [{
+           'label': item.label,
+           'action': ('updated' if __vm_existed else 'created'),
+           'verified': true
+         }] }}
+- name: "vault-migrate-one | Report"
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.label }}: {{ 'updated in place' if __vm_existed else 'created' }}
+      in gs_infra_credentials, encrypted with Ludus's own
+      database_encryption_key, read back and verified. Vault copy left intact.

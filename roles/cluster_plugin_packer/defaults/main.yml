@@ -1,0 +1,9 @@
+---
+cluster_plugin_packer_root: /opt/ludus/resources/packer/plugins
+cluster_plugin_packer_owner: ludus
+cluster_plugin_packer_group: users
+cluster_plugin_packer_list:
+  - source: github.com/badsectorlabs/proxmox
+    version: 1.2.4
+  - source: github.com/hashicorp/ansible
+    version: 1.1.1

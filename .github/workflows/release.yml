@@ -1,0 +1,34 @@
+---
+# Publish the get_sybers.cluster collection to Ansible Galaxy on a GitHub
+# release. Self-contained: the collection is the repository root, so the build
+# and the publish run there. The `release` environment holds the
+# ANSIBLE_GALAXY_API_KEY secret (doc/standards/04 bootstrap).
+name: Release collection
+on:
+  release:
+    types: [published]
+permissions: {}
+env:
+  # The same ansible-core line the CI workflow pins.
+  ANSIBLE_CORE_PIN: "2.21.5"
+jobs:
+  galaxy:
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install ansible-core
+        run: |
+          python3 -m pip install --user "ansible-core==$ANSIBLE_CORE_PIN"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Build the collection artifact
+        run: ansible-galaxy collection build --force --output-path dist/
+      - name: Publish to Ansible Galaxy
+        env:
+          ANSIBLE_GALAXY_API_KEY: ${{ secrets.ANSIBLE_GALAXY_API_KEY }}
+        run: ansible-galaxy collection publish dist/*.tar.gz --api-key "$ANSIBLE_GALAXY_API_KEY"

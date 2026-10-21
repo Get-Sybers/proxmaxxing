@@ -1,0 +1,74 @@
+---
+- name: "vault-remove-gated | Assert every migrated entry was verified first"
+  ansible.builtin.assert:
+    that: (__vm_migrated | default([]) | length) == (__vm_migrate | length)
+    fail_msg: >-
+      Refusing to remove: {{ __vm_migrate | length }} entr(y/ies) were
+      classified MIGRATE but only {{ __vm_migrated | default([]) | length }} completed the
+      write-and-read-back verification. Shredding a vault entry whose
+      replacement was not verified would destroy the only copy.
+    quiet: true
+- name: "vault-remove-gated | Assert every retire candidate has a proven Ludus-side copy"
+  ansible.builtin.assert:
+    that: (__vm_retired_verified | default([]) | length) == (__vm_retire | length)
+    fail_msg: >-
+      Refusing to remove: {{ __vm_retire | length }} entr(y/ies) were classified
+      RETIRE but only {{ __vm_retired_verified | default([]) | length }} were confirmed to
+      have a live copy in Ludus's own storage.
+    quiet: true
+- name: "vault-remove-gated | Build the removal set (MIGRATE + RETIRE, never KEEP)"
+  ansible.builtin.set_fact:
+    __vm_remove: "{{ __vm_migrate + __vm_retire }}"
+  no_log: true
+- name: "vault-remove-gated | Assert the removal set contains no KEEP entry"
+  ansible.builtin.assert:
+    that: >-
+      (__vm_remove | map(attribute='name') | select('in', vault_keep_entries)
+       | list | length) == 0
+    fail_msg: >-
+      REFUSING TO REMOVE: the removal set includes an entry that is also
+      classified KEEP. RA's key is the bootstrap root-of-trust and the vault
+      invariant — it is never a removal candidate. The classification vars are
+      wrong; fix them before re-running.
+    quiet: true
+  no_log: true
+- name: "vault-remove-gated | Report what is about to be shredded (labels only)"
+  ansible.builtin.debug:
+    msg: >-
+      Shredding {{ __vm_remove | length }} vault entr(y/ies):
+      {{ __vm_remove | map(attribute='label') | list }}. Keeping
+      {{ __vm_keep | map(attribute='label') | list }}.
+- name: "vault-remove-gated | Shred each entry (overwrite, then unlink)"
+  ansible.builtin.command:
+    argv:
+      - shred
+      - --remove
+      - --zero
+      - "{{ item.path }}"
+  loop: "{{ __vm_remove }}"
+  loop_control:
+    label: "{{ item.label }}"
+  register: __vm_shred
+  no_log: true
+  changed_when: true
+- name: "vault-remove-gated | NEGATIVE CONTROL — re-stat each removed path"
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  loop: "{{ __vm_remove }}"
+  loop_control:
+    label: "{{ item.label }}"
+  register: __vm_gone
+  no_log: true
+  check_mode: false
+- name: "vault-remove-gated | Assert every removed entry is actually gone"
+  ansible.builtin.assert:
+    that: (__vm_gone.results | selectattr('stat.exists') | list | length) == 0
+    fail_msg: >-
+      {{ __vm_gone.results | selectattr('stat.exists') | list | length }} entr(y/ies)
+      still exist after shred. The removal did not complete; the vault is in a
+      mixed state. Do not re-run blindly — list the directory as root and
+      reconcile against gs_infra_credentials first.
+    success_msg: >-
+      All {{ __vm_remove | length }} entr(y/ies) confirmed removed.
+    quiet: true
+  no_log: true

@@ -1,0 +1,32 @@
+---
+- name: Converge (expect a controlled failure)
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: A missing manifest must make the role refuse, not guess
+      block:
+        - name: Run cluster_patch_packer_iso with a non-existent manifest
+          ansible.builtin.include_role:
+            name: get_sybers.cluster.cluster_patch_packer_iso
+          vars:
+            cluster_patch_packer_iso_manifest: /nonexistent/iso-inventory.yml
+      rescue:
+        - name: The role refused without a manifest
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result is defined
+              - "'This role NEVER guesses an ISO name' in (ansible_failed_result.msg | default(''))"
+            fail_msg: >-
+              failed, but not at the missing-manifest refusal:
+              {{ ansible_failed_result | default({}) }}
+            quiet: true
+        - name: Record the controlled failure
+          ansible.builtin.set_fact:
+            __pi_failed_cleanly: true
+    - name: The failure path was taken
+      ansible.builtin.assert:
+        that:
+          - __pi_failed_cleanly | default(false)
+        fail_msg: "cluster_patch_packer_iso did not refuse a missing manifest"
+        quiet: true

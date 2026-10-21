@@ -1,0 +1,465 @@
+---
+- name: "Rotate Ludus's database_encryption_key and re-encrypt everything under it"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: "Refuse --check"
+      ansible.builtin.assert:
+        that: not ansible_check_mode
+        fail_msg: >-
+          This play rewrites config.yml, restarts ludus, and PATCHes credential
+          records — check mode cannot simulate any of it and must not half-run.
+          Re-run without --check.
+        quiet: true
+    - name: "Cluster admission gate"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_preflight
+    - name: "Refuse the API fallback without the passwords it needs"
+      ansible.builtin.assert:
+        that: (not (dek_restore_via_api | bool)) or (dek_api_passwords | length > 0)
+        fail_msg: >-
+          dek_restore_via_api=true was set but dek_api_passwords is empty. That
+          fallback exists ONLY for a database whose ciphertexts no longer open
+          under the key in config.yml. Understand what it cannot do before
+          using it: POST /api/v2/user/credentials writes proxmoxPassword only,
+          never proxmoxTokenSecret, and refuses the ROOT user — so it cannot
+          repair Proxmox API access for anyone, nor anything for ROOT. If the
+          default path's capture step failed, STOP and raise it rather than
+          reaching for this.
+        quiet: true
+    - name: "Resolve the AES-GCM helper shipped beside this play"
+      ansible.builtin.set_fact:
+        __dek_helper: "{{ playbook_dir }}/files/pb-aesgcm.py"
+    - name: "The helper is present and executable by this interpreter"
+      ansible.builtin.stat:
+        path: "{{ __dek_helper }}"
+      register: __dek_helper_stat
+      check_mode: false
+    - name: "Refuse without the helper"
+      ansible.builtin.assert:
+        that: __dek_helper_stat.stat.exists
+        fail_msg: >-
+          Missing {{ __dek_helper }}. The collection is not fully installed —
+          re-run `ludus ansible collection add https://github.com/Get-Sybers/proxmaxxing.git --global --force` and
+          try again.
+        quiet: true
+    - name: "Vault preflight (only when a live API proof is requested)"
+      when: (dek_verify_api_users | length) > 0
+      block:
+        - name: "Read the credential vault's ZFS properties"
+          community.general.zfs_facts:
+            name: "{{ dek_vault_dataset }}"
+            properties: keystatus,mounted
+          register: __dek_vault_zfs
+          check_mode: false
+        - name: "Refuse a LOCKED or UNMOUNTED vault (before any write)"
+          ansible.builtin.assert:
+            that:
+              - (__dek_vault_zfs.ansible_facts.ansible_zfs_datasets | first).keystatus == 'available'
+              - (__dek_vault_zfs.ansible_facts.ansible_zfs_datasets | first).mounted == 'yes'
+            fail_msg: >-
+              The credential vault {{ dek_vault_dataset }} is LOCKED or NOT
+              MOUNTED (keystatus={{ (__dek_vault_zfs.ansible_facts.ansible_zfs_datasets | first).keystatus }},
+              mounted={{ (__dek_vault_zfs.ansible_facts.ansible_zfs_datasets | first).mounted }}).
+              The post-rotation verify reads dek_verify_api_users keys from it, so
+              it would fail AFTER re-encryption — the 2026-09-02 orphaning. Unlock
+              it (/usr/local/sbin/unlock-credentials), or set
+              dek_verify_api_users: [] to skip the live proof, then re-run.
+              NOTHING HAS BEEN MODIFIED.
+            quiet: true
+        - name: "Stat each verify identity's vault key file"
+          ansible.builtin.stat:
+            path: "{{ dek_vault_dir }}/{{ item }}.apikey"
+          register: __dek_vault_keys
+          loop: "{{ dek_verify_api_users }}"
+          check_mode: false
+        - name: "Refuse if any verify identity's key file is absent"
+          ansible.builtin.assert:
+            that: (__dek_vault_keys.results | rejectattr('stat.exists') | list | length) == 0
+            fail_msg: >-
+              A dek_verify_api_users identity has no <id>.apikey under
+              {{ dek_vault_dir }}, so its post-rotation live proof cannot run.
+              Add the key or narrow dek_verify_api_users. NOTHING HAS BEEN
+              MODIFIED.
+            quiet: true
+    - name: "Encrypt a throwaway value with a throwaway key"
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ __dek_helper }}"
+      args:
+        stdin: >-
+          {{ {'op': 'encrypt', 'key': 'selftest-key-selftest-key-000000',
+              'data': ('ludus-dek-selftest' | b64encode)} | to_json }}
+        stdin_add_newline: false
+      register: __dek_selftest_ct
+      check_mode: false
+      changed_when: false
+    - name: "Decrypt it back"
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ __dek_helper }}"
+      args:
+        stdin: >-
+          {{ {'op': 'decrypt', 'key': 'selftest-key-selftest-key-000000',
+              'data': __dek_selftest_ct.stdout} | to_json }}
+        stdin_add_newline: false
+      register: __dek_selftest_pt
+      check_mode: false
+      changed_when: false
+    - name: "Assert the round trip and the wire format"
+      ansible.builtin.assert:
+        that:
+          - (__dek_selftest_pt.stdout | b64decode) == 'ludus-dek-selftest'
+          - (__dek_selftest_ct.stdout | length) == 64
+        fail_msg: >-
+          The AES-256-GCM helper does not round-trip at the expected framing
+          (got {{ __dek_selftest_ct.stdout | length }} b64 chars, expected 64).
+          STOP — every verification downstream of this would be a false green.
+        success_msg: >-
+          AES-256-GCM helper verified: round-trip clean, framing is
+          nonce(12)||ct||tag(16) base64-standard, as Ludus writes it.
+        quiet: true
+    - name: "Rotate, re-encrypt and verify (capture-first)"
+      block:
+        - name: "Stat config.yml (owner, mode, mtime — before anything)"
+          ansible.builtin.stat:
+            path: "{{ ludus_config_path }}"
+            checksum_algorithm: sha256
+          register: __dek_cfg_stat
+          check_mode: false
+        - name: "Assert config.yml is there to capture"
+          ansible.builtin.assert:
+            that: __dek_cfg_stat.stat.exists
+            fail_msg: >-
+              {{ ludus_config_path }} does not exist. This is not a Ludus
+              server, or the install is broken — nothing to rotate.
+            quiet: true
+        - name: "Read config.yml verbatim (the rollback material)"
+          ansible.builtin.slurp:
+            src: "{{ ludus_config_path }}"
+          register: __dek_cfg_slurp
+          no_log: true
+          check_mode: false
+        - name: "Derive the CURRENT key (config value, else the public default)"
+          ansible.builtin.set_fact:
+            __dek_key_in_config: >-
+              {{ (__dek_cfg_slurp.content | b64decode | from_yaml).database_encryption_key
+                 | default('', true) }}
+          no_log: true
+        - name: "Settle the old key and how we got it"
+          ansible.builtin.set_fact:
+            __dek_old_key: "{{ __dek_key_in_config | default('', true) or dek_public_default }}"
+            __dek_old_key_source: >-
+              {{ 'config.yml (a key was already set)'
+                 if (__dek_key_in_config | length > 0)
+                 else 'the PUBLIC hardcoded default from ludus-api/config.go:89 — this is the #173 finding' }}
+          no_log: true
+        - name: "Assert the current key is a usable AES-256 key"
+          ansible.builtin.assert:
+            that: (__dek_old_key | length) == 32
+            fail_msg: >-
+              The key currently in force is {{ __dek_old_key | length }} bytes,
+              not 32. AES-256 requires exactly 32. Fix config.yml before
+              rotating — nothing here has been modified.
+            quiet: true
+          no_log: true
+        - name: "Report the starting state (never any key bytes)"
+          ansible.builtin.debug:
+            msg:
+              config: "{{ ludus_config_path }}"
+              config_sha256: "{{ __dek_cfg_stat.stat.checksum }}"
+              config_mtime: "{{ __dek_cfg_stat.stat.mtime }}"
+              config_mode: "{{ __dek_cfg_stat.stat.mode }}"
+              key_currently_in_force: "{{ __dek_old_key_source }}"
+        - name: "Authenticate to PocketBase as the superuser"
+          ansible.builtin.include_role:
+            name: get_sybers.cluster.cluster_pb_store
+            tasks_from: auth_superuser
+        - name: "List every Ludus user record"
+          ansible.builtin.include_role:
+            name: get_sybers.cluster.cluster_pb_store
+            tasks_from: record_list
+          vars:
+            cluster_pb_store_collection_name: users
+        - name: "TARGETS — one entry per (user, field) carrying ciphertext"
+          ansible.builtin.set_fact:
+            __dek_targets: >-
+              {%- set out = [] -%}
+              {%- for r in __pb_record_items -%}
+              {%-   for f in ['proxmoxPassword', 'proxmoxTokenSecret'] -%}
+              {%-     if (r[f] | default('')) | length > 0 -%}
+              {%-       set _ = out.append({'id': r.id, 'userID': r.userID,
+                                            'field': f, 'ct': r[f]}) -%}
+              {%-     endif -%}
+              {%-   endfor -%}
+              {%- endfor -%}
+              {{ out }}
+          no_log: true
+        - name: "Assert the enumeration found something to rotate"
+          ansible.builtin.assert:
+            that: (__dek_targets | length) > 0
+            fail_msg: >-
+              No user record carries a non-empty proxmoxPassword or
+              proxmoxTokenSecret. That is not a plausible state for a running
+              Ludus server (ROOT alone always has a token secret —
+              database.go:139-145), so the superuser listing is wrong or the
+              collection is damaged. Nothing has been modified; stop and
+              investigate before rotating a key.
+            quiet: true
+          no_log: true
+        - name: "Report the affected set (userIDs and counts only)"
+          ansible.builtin.debug:
+            msg:
+              encrypted_fields_total: "{{ __dek_targets | length }}"
+              users_affected: >-
+                {{ __dek_targets | map(attribute='userID') | unique | sort | list }}
+              users_with_password: >-
+                {{ __dek_targets | selectattr('field', 'eq', 'proxmoxPassword')
+                   | map(attribute='userID') | sort | list }}
+              users_with_token_secret: >-
+                {{ __dek_targets | selectattr('field', 'eq', 'proxmoxTokenSecret')
+                   | map(attribute='userID') | sort | list }}
+        - name: "READ-ONLY, LENGTH-ONLY cross-check straight off data.db"
+          ansible.builtin.include_tasks: tasks/dek-sqlite-crosscheck.yml
+          when: dek_sqlite_crosscheck | bool
+        - name: "Prove every ciphertext opens under the CURRENT key"
+          ansible.builtin.include_tasks: tasks/dek-capture-one.yml
+          loop: "{{ __dek_targets }}"
+          loop_control:
+            label: "{{ item.userID }}.{{ item.field }}"
+        - name: "Report the captured set (counts, never plaintexts)"
+          ansible.builtin.debug:
+            msg: >-
+              Captured and verified {{ __dek_capture | default([]) | length }} encrypted
+              field(s) across
+              {{ __dek_capture | default([]) | map(attribute='userID') | unique | list | length }}
+              user(s):
+              {{ __dek_capture | default([]) | map(attribute='userID') | unique | sort | list }}.
+              Every one opened cleanly under the key currently in force.
+        - name: "Generate a 32-character key from the system CSPRNG"
+          ansible.builtin.shell:
+            cmd: |
+              set -o pipefail
+              openssl rand -base64 96 | tr -dc 'A-Za-z0-9' | cut -c1-32
+            executable: /bin/bash
+          register: __dek_gen
+          no_log: true
+          changed_when: false
+          check_mode: false
+        - name: "Register it (no_log)"
+          ansible.builtin.set_fact:
+            __dek_new_key: "{{ __dek_gen.stdout | trim }}"
+          no_log: true
+        - name: "Assert it is a well-formed AES-256 key and is actually new"
+          ansible.builtin.assert:
+            that:
+              - (__dek_new_key | length) == 32
+              - __dek_new_key != __dek_old_key
+              - __dek_new_key != dek_public_default
+            fail_msg: >-
+              Generated key is unusable (length={{ __dek_new_key | length }},
+              expected 32) or is not distinct from the key already in force.
+              Nothing has been modified.
+            quiet: true
+          no_log: true
+        - name: "Set database_encryption_key (backup on disk as well as in memory)"
+          ansible.builtin.lineinfile:
+            path: "{{ ludus_config_path }}"
+            regexp: '^\s*database_encryption_key\s*:'
+            line: 'database_encryption_key: "{{ __dek_new_key }}"'
+            state: present
+            insertafter: EOF
+            backup: true
+            owner: "{{ __dek_cfg_stat.stat.pw_name }}"
+            group: "{{ __dek_cfg_stat.stat.gr_name }}"
+            mode: "{{ __dek_cfg_stat.stat.mode }}"
+          register: __dek_cfg_write
+          no_log: true
+        - name: "Report the write (path of the backup, never the key)"
+          ansible.builtin.debug:
+            msg: >-
+              config.yml updated; ansible backup at
+              {{ __dek_cfg_write.backup | default('(none — file was already correct)') }}.
+              Ownership and mode preserved as
+              {{ __dek_cfg_stat.stat.pw_name }}:{{ __dek_cfg_stat.stat.gr_name }}
+              {{ __dek_cfg_stat.stat.mode }} — this play does not tighten
+              config.yml's permissions, because doing so silently could lock
+              out the non-root :8080 service. If {{ __dek_cfg_stat.stat.mode }}
+              is wider than 0640, raise it as its own finding.
+        - name: "Restart the Ludus services"
+          ansible.builtin.systemd_service:
+            name: "{{ item }}"
+            state: restarted
+          loop: "{{ ludus_services }}"
+        - name: "Wait for /api/health to answer 200"
+          ansible.builtin.uri:
+            url: "{{ ludus_health_url }}"
+            method: GET
+            validate_certs: false
+            status_code: [200]
+          register: __dek_health
+          retries: 30
+          delay: 2
+          until: __dek_health.status | default(0) == 200
+          changed_when: false
+        - name: "Re-authenticate to PocketBase after the restart"
+          ansible.builtin.include_role:
+            name: get_sybers.cluster.cluster_pb_store
+            tasks_from: auth_superuser
+        - name: "Re-encrypt every captured field under the NEW key and verify"
+          ansible.builtin.include_tasks: tasks/dek-restore-one.yml
+          loop: "{{ __dek_capture | default([]) }}"
+          loop_control:
+            label: "{{ item.userID }}.{{ item.field }}"
+        - name: "Re-encrypt any gs_infra_credentials records (#165 Phase B data)"
+          ansible.builtin.include_role:
+            name: get_sybers.cluster.cluster_pb_store
+            tasks_from: record_list
+        - name: "Re-encrypt each stored infra credential"
+          ansible.builtin.include_tasks: tasks/dek-reencrypt-record-one.yml
+          loop: "{{ __pb_record_ids }}"
+          loop_control:
+            label: "gs_infra_credentials record {{ item }}"
+        - name: "Live per-user Proxmox proof for every user the vault can authenticate as"
+          ansible.builtin.include_tasks: tasks/dek-verify-user-one.yml
+          loop: "{{ dek_verify_api_users }}"
+          loop_control:
+            label: "live API proof as {{ item }}"
+        - name: "Name every affected user WITHOUT a live API proof"
+          ansible.builtin.debug:
+            msg: >-
+              CRYPTOGRAPHICALLY PROVEN BUT NOT LIVE-PROVEN:
+              {{ __dek_capture | default([]) | map(attribute='userID') | unique
+                 | reject('in', dek_verify_api_users) | sort | list }}.
+              Each of their fields was decrypted under the new key and matched
+              the sha256 captured before the rotation, so the ciphertext is
+              correct. No Proxmox call was made as them — the vault holds no
+              Ludus API key for them, and minting one is a separate action.
+              To live-prove one, add it to dek_verify_api_users once its key is
+              obtainable.
+        - name: "Final state, shape only"
+          ansible.builtin.debug:
+            msg:
+              key_rotated_from: "{{ __dek_old_key_source }}"
+              new_key_length: "{{ __dek_new_key | length }}"
+              config_backup: "{{ __dek_cfg_write.backup | default('(none)') }}"
+              user_fields_reencrypted: "{{ __dek_restored | default([]) | length }}"
+              users_touched: "{{ __dek_restored | default([]) | map(attribute='userID') | unique | sort | list }}"
+              already_converted_on_entry: >-
+                {{ __dek_restored | default([]) | selectattr('status', 'eq', 'already')
+                   | map(attribute='userID') | list }}
+              infra_credential_records_reencrypted: "{{ __pb_record_count }}"
+              live_api_proofs: "{{ dek_verify_api_users }}"
+              services_restarted: "{{ ludus_services }}"
+              health: "HTTP {{ __dek_health.status }}"
+      rescue:
+        # best-effort rescue re-auth: a failure here must not abort the reversal below.
+        - name: "Re-authenticate to PocketBase for the reversal"  # noqa: ignore-errors
+          ansible.builtin.include_role:
+            name: get_sybers.cluster.cluster_pb_store
+            tasks_from: auth_superuser
+          when: (__dek_capture | default([]) | length > 0) or (__dek_records_captured | default([]) | length > 0)
+          ignore_errors: true
+        # best-effort rescue revert: one field failing must not abort reverting the rest.
+        - name: "Revert every captured USER field to its old-key ciphertext"  # noqa: ignore-errors
+          ansible.builtin.include_tasks: tasks/dek-revert-field-one.yml
+          loop: "{{ __dek_capture | default([]) }}"
+          loop_control:
+            label: "{{ item.userID }}.{{ item.field }}"
+          when: (__dek_capture | default([]) | length) > 0
+          ignore_errors: true
+        # best-effort rescue revert: one record failing must not abort reverting the rest.
+        - name: "Revert every captured infra credential to its old-key ciphertext"  # noqa: ignore-errors
+          ansible.builtin.include_role:
+            name: get_sybers.cluster.cluster_pb_store
+            tasks_from: record_update
+          vars:
+            cluster_pb_store_record_id: "{{ item.id }}"
+            cluster_pb_store_record_value: "{{ item.ct }}"
+            cluster_pb_store_record_note: "reverted to pre-rotation ciphertext (dek-rotate rescue)"
+          loop: "{{ __dek_records_captured | default([]) }}"
+          loop_control:
+            label: "gs_infra_credentials record {{ item.id }}"
+          when: (__dek_records_captured | default([]) | length) > 0
+          ignore_errors: true
+        # best-effort rescue restore in the failure path.
+        - name: "Restore the EXACT captured config.yml bytes"  # noqa: ignore-errors
+          ansible.builtin.copy:
+            content: "{{ __dek_cfg_slurp.content | b64decode }}"
+            dest: "{{ ludus_config_path }}"
+            owner: "{{ __dek_cfg_stat.stat.pw_name }}"
+            group: "{{ __dek_cfg_stat.stat.gr_name }}"
+            mode: "{{ __dek_cfg_stat.stat.mode }}"
+          register: __dek_rollback
+          no_log: true
+          ignore_errors: true
+        - name: "Restart the services onto the restored config"
+          ansible.builtin.systemd_service:
+            name: "{{ item }}"
+            state: restarted
+          loop: "{{ ludus_services }}"
+          register: __dek_rollback_restart
+          ignore_errors: true
+        - name: "Wait for health on the restored config"
+          ansible.builtin.uri:
+            url: "{{ ludus_health_url }}"
+            method: GET
+            validate_certs: false
+            status_code: [200]
+          register: __dek_rollback_health
+          retries: 30
+          delay: 2
+          until: __dek_rollback_health.status | default(0) == 200
+          changed_when: false
+          ignore_errors: true
+        - name: "Re-stat config.yml to prove what is actually on disk now"
+          ansible.builtin.stat:
+            path: "{{ ludus_config_path }}"
+            checksum_algorithm: sha256
+          register: __dek_rollback_stat
+          ignore_errors: true
+          check_mode: false
+        - name: "REPORT: the original failure AND the rollback outcome"
+          ansible.builtin.debug:
+            msg:
+              original_failure_task: "{{ ansible_failed_task.name | default('(unknown)') }}"
+              original_failure: >-
+                {{ ansible_failed_result.msg
+                   | default(ansible_failed_result.stderr
+                             | default('(no message — the failing task was no_log; re-run with the failing step isolated)')) }}
+              rollback_write: "{{ 'OK' if not (__dek_rollback.failed | default(true)) else 'FAILED' }}"
+              rollback_restart: "{{ 'OK' if not (__dek_rollback_restart.failed | default(true)) else 'FAILED' }}"
+              rollback_health: >-
+                {{ 'OK (HTTP ' ~ (__dek_rollback_health.status | default('?')) ~ ')'
+                   if (__dek_rollback_health.status | default(0) == 200) else 'FAILED' }}
+              config_sha256_before: "{{ __dek_cfg_stat.stat.checksum }}"
+              config_sha256_now: "{{ __dek_rollback_stat.stat.checksum | default('(could not stat)') }}"
+              config_restored_byte_identical: >-
+                {{ (__dek_rollback_stat.stat.checksum | default('')) == __dek_cfg_stat.stat.checksum }}
+              user_fields_reverted_to_old_key: "{{ __dek_capture | default([]) | length }}"
+              infra_records_reverted_to_old_key: "{{ __dek_records_captured | default([]) | length }}"
+              what_this_means: >-
+                The rescue reverted every re-encrypted field to the exact
+                ciphertext captured before the rotation, THEN restored the
+                old-key config.yml — so data and config are both back on the OLD
+                key and service is fully restored. CHECK the revert tasks above
+                did not report failed: if a revert failed (e.g. the API was
+                unreachable), restore those fields from source —
+                users.proxmoxTokenSecret from /etc/pve/priv/token.cfg via
+                cluster-token-restore-from-pve.yml, proxmoxPassword via
+                `ludus user creds set`.
+        - name: "Fail loudly, carrying the original failure forward"
+          ansible.builtin.fail:
+            msg: >-
+              DEK ROTATION FAILED at '{{ ansible_failed_task.name | default('(unknown)') }}'.
+              Database reverted to pre-rotation ciphertext
+              ({{ __dek_capture | default([]) | length }} user field(s),
+              {{ __dek_records_captured | default([]) | length }} infra record(s)); config.yml
+              {{ 'restored byte-identical'
+                 if ((__dek_rollback_stat.stat.checksum | default('')) == __dek_cfg_stat.stat.checksum)
+                 else 'restore DID NOT fully succeed — on-disk config.yml does not match what was captured' }}.
+              See the report above for the original error and the per-field
+              revert outcomes.

@@ -1,0 +1,88 @@
+---
+added:
+  - >-
+    New role ``cluster_discover`` and play ``cluster-discover`` — read the live
+    cluster (PVE version, corosync membership, block devices, ZFS pools,
+    interfaces, guests; cluster status and node fingerprints, storage,
+    users/groups/roles/realms, pools, SDN objects, directory mappings and Ceph
+    via ``ceph_info``) and fill the inventory's As-Is records
+    (``host_vars/<host>/node.yml``, ``group_vars/proxmox_cluster/cluster.yml``)
+    from it. By default it writes proposal files under ``inventory/discovered/``
+    (never loaded); ``cluster_discover_write=in_place`` rewrites the records
+    themselves. Configured values win and discovery fills the gaps unless
+    ``cluster_discover_overwrite=true``; annotations the node cannot report
+    survive either way because disks, pools, guests and cluster objects are
+    merged on their identity key. ``--check --diff`` is a drift report and
+    ``cluster_discover_strict=true`` a drift gate. Positive (fixture-driven
+    render, idempotence, verify) and negative Molecule scenarios.
+  - >-
+    New filters ``get_sybers.cluster.config_merge`` (fill or overwrite a
+    configuration mapping from discovered values, keyed lists merged
+    element-wise, null never wins), ``get_sybers.cluster.config_drift`` (every
+    discovered value the configuration lacks or contradicts) and
+    ``get_sybers.cluster.to_config_yaml`` (the block-style, insertion-ordered
+    YAML the inventory files are written in), with unit tests.
+changed:
+  - >-
+    The inventory directory is now the single config home and ``ansible.cfg``
+    points at it. ``hosts.yml`` holds only hosts and groups (``proxmox_cluster``,
+    the new ``proxmox_master`` for the Ludus node, and a declared ``controller``
+    localhost so the controller-side plays receive group_vars); every value
+    the plays consume lives in ``group_vars/all/<topic>.yml``,
+    ``group_vars/proxmox_cluster/<topic>.yml`` and
+    ``host_vars/<host>/<topic>.yml``. ``inventory/cluster.yml`` (a snapshot that
+    was being parsed as an inventory source) became
+    ``group_vars/proxmox_cluster/cluster.yml``; ``inventory/secrets/`` and
+    ``inventory/discovered/`` are ignored as inventory sources.
+  - >-
+    Every play-level ``vars:`` / ``vars_files`` block is gone (standards §5):
+    the audit-logging, Ceph (diagnose, tuning, mesh), SDN, storage-net,
+    node-repos, node-upgrade, credential, vault, DEK, token, identity,
+    GitLab-runner, sources and 1Password plays read their configuration from
+    the inventory under topic-prefixed names (``audit_*``, ``sdn_*``,
+    ``node_repos_*``, ``mesh_*``, ``ceph_*``, ...). No play names a host any
+    more: the hard-coded master hostname became ``hosts: proxmox_master`` and
+    ``delegate_to`` uses ``cluster_master_node``; the Ceph mesh cutover derives
+    its mon targets, OSD hosts, prefixes and bench interface from the mesh
+    config and the live OSD tree.
+  - >-
+    Role defaults no longer carry site values (standards §4c/§4d):
+    ``cluster_onepassword_connect_node``, ``cluster_ceph_orphan_sweep_pool``,
+    ``cluster_ludus_install_vm_storage_pool`` / ``_sdn_zone`` /
+    ``_reserved_range_numbers`` reference the collection variables
+    ``cluster_master_node``, ``ceph_pool``, ``sdn_zone`` and
+    ``ludus_reserved_range_numbers`` the inventory defines; ``sysmon_linux``
+    defaults are generic (loopback-only exclusions, a neutral stage dir); the
+    ``cluster_preflight`` group name is the documented input
+    ``cluster_preflight_cluster_group`` and its messages name no host.
+  - >-
+    Generated files are templates (standards §13): the FRR ``frr.conf`` and the
+    ``storage-mesh`` stanza of the mesh play, and the ``storage-net`` stanzas
+    and hotplug udev rule of the storage-net play.
+  - >-
+    ``cluster-audit-logging`` no longer uses ``meta: end_play`` (standards
+    §4e): the gate play skips its block on a rollback and the rollback branch
+    ends the host.
+removed:
+  - >-
+    ``playbooks/cluster-verify-host-vars.yml`` — it checked host_vars keys that
+    did not exist (``ceph_roles``, ``rpool_layout``, ``rpool_disk_serial``,
+    ``ceph_osd_disk_serial``) and read facts under the wrong name
+    (``_rpool_serials_live`` for ``__rpool_serials_live``), so it never verified
+    anything; ``cluster-discover.yml --check --diff`` (and
+    ``cluster_discover_strict``) replaces it.
+  - >-
+    ``playbooks/bootstrap-site-vars.yml`` and its template — it vault-encrypted
+    two non-secret values into ``vars/site.yml``, which nothing loaded;
+    ``audit_zpool`` and ``audit_min_free_gb`` are plain inventory values now.
+  - >-
+    ``playbooks/vars/ludus-common.yml`` and ``playbooks/vars/audit-artefacts.yml``
+    — folded into ``group_vars/all``.
+fixed:
+  - >-
+    ``cluster-ceph-mesh`` wrote a mangled Jinja comment (a bare ``{`` and two
+    lines of prose) into ``/etc/frr/frr.conf`` on every run; the template
+    carries a real ``{# #}`` comment.
+  - >-
+    ``cluster-storage-net`` hard-coded ``thunderbolt0`` in the hotplug udev
+    rule; the rule is rendered for every hotplug link in ``storage_links``.

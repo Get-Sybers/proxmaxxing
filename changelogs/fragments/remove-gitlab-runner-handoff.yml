@@ -1,0 +1,9 @@
+---
+removed:
+  - >-
+    ``playbooks/cluster-gitlab-runner.yml`` and
+    ``inventory/group_vars/all/gitlab_runner.yml``. The play built nothing of
+    its own: it fetched a GitLab admin token from the credential vault and
+    handed off to the ``get_sybers.infra`` collection's runner play, which is
+    not part of this repository. The cluster runs no GitLab or GitLab runner,
+    so the handoff and the vault path it named are retired.

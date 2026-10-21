@@ -1,0 +1,9 @@
+---
+# Connection variables for the cluster nodes (standards §14 reserves this file
+# for them). The address is read from each node's discovered record so it has
+# one authoritative home; a node that has not been discovered yet is reached by
+# its inventory name, which must then resolve (DNS or /etc/hosts).
+ansible_host: "{{ (node | default({}))['mgmt_ip'] | default(inventory_hostname) }}"
+# The cluster plays are the operator-root tier: they run as root on the node.
+# cluster_preflight asserts uid 0 and there is no sudo/become path.
+ansible_user: root

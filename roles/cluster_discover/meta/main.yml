@@ -1,0 +1,18 @@
+---
+galaxy_info:
+  role_name: cluster_discover
+  namespace: get_sybers
+  author: Get-Sybers
+  description: >-
+    Read the live Proxmox cluster (node hardware, disks, pools, network,
+    guests, corosync, PVE storage/access/SDN objects and Ceph) and fill the
+    inventory's As-Is records from it, as proposal files or in place, with
+    the configured values winning unless an overwrite is asked for.
+  company: Get-Sybers
+  license: AGPL-3.0-only
+  min_ansible_version: "2.19.0"
+  platforms:
+    - name: Debian
+      versions: [bookworm, trixie]
+  galaxy_tags: [proxmox, cluster, discovery, inventory, facts]
+dependencies: []

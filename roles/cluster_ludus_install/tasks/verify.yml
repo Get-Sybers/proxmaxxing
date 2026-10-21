@@ -1,0 +1,83 @@
+---
+- name: "verify | Confirm the Ludus services are active"
+  ansible.builtin.command:
+    cmd: "systemctl is-active {{ item }}"  # noqa: command-instead-of-module
+  loop:
+    - ludus
+    - ludus-admin
+  register: __clv_active
+  changed_when: false
+  check_mode: false
+  failed_when: __clv_active.stdout | trim != "active"
+  loop_control:
+    label: "{{ item }}"
+
+- name: "verify | Read the installed Ludus version"
+  ansible.builtin.command:
+    cmd: "ludus version"  # noqa: command-instead-of-module
+  register: __clv_version
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when: cluster_ludus_install_version | length > 0
+
+- name: "verify | The installed version matches the expected one"
+  ansible.builtin.assert:
+    that:
+      - __clv_version.rc == 0
+      - __clv_version.stdout is search(cluster_ludus_install_version | regex_escape)
+    fail_msg: >-
+      Expected Ludus {{ cluster_ludus_install_version }} but `ludus version`
+      returned rc={{ __clv_version.rc | default('?') }} /
+      '{{ __clv_version.stdout | default('') | trim }}'.
+    quiet: true
+  when: cluster_ludus_install_version | length > 0
+
+- name: "verify | Prove the acting API key authenticates"
+  when: cluster_ludus_install_verify_whoami | bool
+  block:
+    - name: "verify | An API key must be exported to run the /whoami check"
+      ansible.builtin.assert:
+        that: (lookup('env', 'LUDUS_API_KEY') | default('', true) | trim | length) > 0
+        fail_msg: >-
+          cluster_ludus_install_verify_whoami is true but LUDUS_API_KEY is not in
+          the environment. Export a Ludus API key (see playbooks/ludus-ra-auth.yml)
+          and re-run, or set it false.
+        quiet: true
+
+    - name: "verify | Call /whoami with the environment key"
+      ansible.builtin.uri:
+        url: "{{ cluster_ludus_install_api_url }}/whoami"
+        method: GET
+        validate_certs: "{{ cluster_ludus_install_validate_certs | bool }}"
+        headers:
+          X-API-KEY: "{{ lookup('env', 'LUDUS_API_KEY') }}"
+        status_code: [200, 401, 403]
+        return_content: true
+      register: __clv_whoami
+      failed_when: false
+      no_log: true
+      check_mode: false
+
+    - name: "verify | The API accepted the key"
+      ansible.builtin.assert:
+        that: (__clv_whoami.status | default(0) | int) == 200
+        fail_msg: >-
+          The Ludus API did not accept LUDUS_API_KEY (HTTP
+          {{ __clv_whoami.status | default(0) }}). Mint a fresh key with
+          playbooks/ludus-key-rotate.yml, or confirm the server is up on
+          {{ cluster_ludus_install_api_url }}.
+        quiet: true
+
+- name: "verify | Report"
+  ansible.builtin.debug:
+    msg:
+      services_active: "{{ __clv_active.results | map(attribute='item') | list }}"
+      config_root: "{{ cluster_ludus_install_root }}"
+      managed_keys: >-
+        {{ (cluster_ludus_install_managed_keys
+            + (cluster_ludus_install_network_keys if cluster_ludus_install_manage_network | bool else []))
+           | map(attribute='key') | list }}
+      network_managed: "{{ cluster_ludus_install_manage_network | bool }}"
+      root_key_staged: "{{ cluster_ludus_install_stage_root_key | bool }}"
+      database_encryption_key: "preserved (never written)"

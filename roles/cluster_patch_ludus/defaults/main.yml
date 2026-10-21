@@ -1,0 +1,7 @@
+---
+cluster_patch_ludus_root: /opt/ludus
+cluster_patch_ludus_derived_from: "2.3.1"
+cluster_patch_ludus_skip_version_check: false
+cluster_patch_ludus_file_owner: ludus
+cluster_patch_ludus_file_group: ludus
+cluster_patch_ludus_file_mode: "0644"

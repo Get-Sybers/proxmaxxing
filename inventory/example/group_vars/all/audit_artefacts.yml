@@ -1,0 +1,32 @@
+---
+# cluster-audit-logging, supply-chain half: the pinned packages, their digests
+# and where they are pulled from. Read by the localhost gate play AND by the
+# node play (which asserts the gated bytes are staged), hence group_vars/all.
+# Bump versions/digests here. nexus_url is the internal apt mirror the gate
+# fetches from; 192.0.2.2 is an RFC 5737 documentation address standing in for
+# yours.
+nexus_url: "http://192.0.2.2:8081"
+nexus_apt_repo: "msft-debian13-prod-proxy"
+upstream_apt_url: "https://packages.microsoft.com/debian/13/prod"
+auditd_version: "1:4.0.2-2+b2"
+sysmon_version: "1.5.2"
+sysmon_sha256: "bb9a4036b27d10b2a03e14697e75976173bdd20975767f31fda8525c7d49db5f"
+ebpf_version: "1.6.0"
+ebpf_sha256: "1678a37b7f6a61dbbd4864e18b5dc6c2b61fae7c820be75d04f8f0b5b06b7518"
+# Each artefact as the gate fetches and the node installs it, in install order.
+audit_artefacts:
+  - name: sysinternalsebpf
+    version: "{{ ebpf_version }}"
+    sha256: "{{ ebpf_sha256 }}"
+    deb: "sysinternalsebpf_{{ ebpf_version }}_amd64.deb"
+    path: "pool/main/s/sysinternalsebpf/sysinternalsebpf_{{ ebpf_version }}_amd64.deb"
+  - name: sysmonforlinux
+    version: "{{ sysmon_version }}"
+    sha256: "{{ sysmon_sha256 }}"
+    deb: "sysmonforlinux_{{ sysmon_version }}_amd64.deb"
+    path: "pool/main/s/sysmonforlinux/sysmonforlinux_{{ sysmon_version }}_amd64.deb"
+# Where the gate stages the verified .debs on the controller, and where the node
+# play pushes them to on each node (named after the cluster, see cluster.yml).
+audit_stage_dir: "/var/cache/{{ cluster_slug }}/audit-logging"
+audit_node_stage_dir: "/var/cache/{{ cluster_slug }}/audit-logging"
+audit_packages: [auditd, audispd-plugins, sysinternalsebpf, sysmonforlinux]

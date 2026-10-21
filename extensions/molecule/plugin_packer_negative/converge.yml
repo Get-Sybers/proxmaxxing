@@ -1,0 +1,30 @@
+---
+- name: Converge (expect a controlled failure)
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: A host with no packer binary must fail clearly and change nothing
+      block:
+        - name: Run cluster_plugin_packer where `packer` is not installed
+          ansible.builtin.include_role:
+            name: get_sybers.cluster.cluster_plugin_packer
+      rescue:
+        - name: The role stopped at its packer-present check
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result is defined
+              - "'packer is required to install plugins' in (ansible_failed_result.msg | default(''))"
+            fail_msg: >-
+              failed, but not at the packer-present check:
+              {{ ansible_failed_result | default({}) }}
+            quiet: true
+        - name: Record the controlled failure
+          ansible.builtin.set_fact:
+            __pp_failed_cleanly: true
+    - name: The failure path was taken
+      ansible.builtin.assert:
+        that:
+          - __pp_failed_cleanly | default(false)
+        fail_msg: "cluster_plugin_packer did not fail clearly when packer was absent"
+        quiet: true

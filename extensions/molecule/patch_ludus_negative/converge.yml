@@ -1,0 +1,30 @@
+---
+- name: Converge (expect a controlled failure)
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: A host with no ludus binary must stop at the version guard
+      block:
+        - name: Run cluster_patch_ludus where `ludus` is not installed
+          ansible.builtin.include_role:
+            name: get_sybers.cluster.cluster_patch_ludus
+      rescue:
+        - name: The role stopped at its version guard
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result is defined
+              - "'was not found or returned a non-zero exit code' in (ansible_failed_result.msg | default(''))"
+            fail_msg: >-
+              failed, but not at the version guard:
+              {{ ansible_failed_result | default({}) }}
+            quiet: true
+        - name: Record the controlled failure
+          ansible.builtin.set_fact:
+            __lp_failed_cleanly: true
+    - name: The failure path was taken
+      ansible.builtin.assert:
+        that:
+          - __lp_failed_cleanly | default(false)
+        fail_msg: "cluster_patch_ludus did not stop when ludus was absent"
+        quiet: true

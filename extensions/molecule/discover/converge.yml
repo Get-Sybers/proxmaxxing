@@ -1,0 +1,18 @@
+---
+- name: Converge
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Load the committed fixture (the records as written, and what the node reports)
+      ansible.builtin.include_vars:
+        file: files/fixture.yml
+    - name: Fill the records from the fixture facts and write them in place
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_discover
+        tasks_from: render
+      vars:
+        cluster_discover_write: in_place
+        cluster_discover_inventory_dir: /tmp/molecule-inventory
+        cluster_discover_group: molecule
+        cluster_discover_delegate_to: "{{ inventory_hostname }}"

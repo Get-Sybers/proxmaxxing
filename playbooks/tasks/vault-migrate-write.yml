@@ -1,0 +1,23 @@
+---
+- name: "vault-migrate-write | Create the record (no record exists yet)"
+  ansible.builtin.include_role:
+    name: get_sybers.cluster.cluster_pb_store
+    tasks_from: record_write
+  vars:
+    cluster_pb_store_record_name: "{{ item.name }}"
+    cluster_pb_store_record_value: "{{ (__vm_ct.stdout) }}"
+    cluster_pb_store_record_note: >-
+      migrated from the credential vault (
+      Ludus's database_encryption_key
+  when: not (__vm_existed | bool)
+- name: "vault-migrate-write | Update the existing record (re-run / re-encrypt path)"
+  ansible.builtin.include_role:
+    name: get_sybers.cluster.cluster_pb_store
+    tasks_from: record_update
+  vars:
+    cluster_pb_store_record_id: "{{ __vm_existing_id }}"
+    cluster_pb_store_record_value: "{{ (__vm_ct.stdout) }}"
+    cluster_pb_store_record_note: >-
+      re-written from the credential vault (
+      under Ludus's database_encryption_key
+  when: __vm_existed | bool

@@ -1,0 +1,7 @@
+---
+cluster_preflight_require_api_admin: false
+cluster_preflight_api_url: https://127.0.0.1:8080/api/v2
+cluster_preflight_delegate_to: "{{ inventory_hostname }}"
+# The inventory group the cluster nodes belong to (a host not yet in `pvecm
+# nodes` is still admitted when it is a member of this group).
+cluster_preflight_cluster_group: proxmox_cluster

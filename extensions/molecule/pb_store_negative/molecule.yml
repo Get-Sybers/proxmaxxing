@@ -1,0 +1,11 @@
+---
+# cluster_pb_store negative — an unreachable PocketBase must surface as the
+# preflight reachability assertion (failed_when:false + assert), never a raw uri
+# crash. base_url points at a closed local port. No prepare; converge drives it.
+scenario:
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - converge
+    - destroy

@@ -1,0 +1,22 @@
+---
+- name: "record_update | Patch the record value"
+  ansible.builtin.uri:
+    url: "{{ cluster_pb_store_base_url }}/api/collections/{{ cluster_pb_store_collection_name }}/records/{{ cluster_pb_store_record_id }}"
+    method: PATCH
+    headers:
+      Authorization: "{{ __pb_super_token }}"
+    body_format: json
+    body:
+      value: "{{ cluster_pb_store_record_value }}"
+      note: "{{ cluster_pb_store_record_note }}"
+    validate_certs: "{{ cluster_pb_store_validate_certs }}"
+    status_code: [200]
+  register: __pb_record_update
+  no_log: true
+  changed_when: true
+- name: "record_update | Report SHAPE only (id + length, never name or value)"
+  ansible.builtin.debug:
+    msg: >-
+      Record id {{ cluster_pb_store_record_id }} updated in
+      {{ cluster_pb_store_collection_name }}
+      (value length={{ cluster_pb_store_record_value | length }}).

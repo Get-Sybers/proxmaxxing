@@ -1,0 +1,262 @@
+---
+- name: "Migrate the vault's service secrets into gs_infra_credentials"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: "Refuse --check"
+      ansible.builtin.assert:
+        that: not ansible_check_mode
+        fail_msg: >-
+          This play writes PocketBase records through API calls check mode
+          cannot simulate and must not half-run. Re-run without --check.
+        quiet: true
+    - name: "Cluster admission gate"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_preflight
+    - name: "Resolve the AES-GCM helper shipped beside this play"
+      ansible.builtin.set_fact:
+        __vm_helper: "{{ playbook_dir }}/files/pb-aesgcm.py"
+    - name: "Stat the helper"
+      ansible.builtin.stat:
+        path: "{{ __vm_helper }}"
+      register: __vm_helper_stat
+      check_mode: false
+    - name: "Refuse without the helper"
+      ansible.builtin.assert:
+        that: __vm_helper_stat.stat.exists
+        fail_msg: >-
+          Missing {{ __vm_helper }}. The collection is not fully installed —
+          re-run `ludus ansible collection add https://github.com/Get-Sybers/proxmaxxing.git --global --force`.
+        quiet: true
+    - name: "Migrate, verify, and (opt-in) remove"
+      block:
+        - name: "Authenticate to PocketBase as the superuser"
+          ansible.builtin.include_role:
+            name: get_sybers.cluster.cluster_pb_store
+            tasks_from: auth_superuser
+        - name: "Fact-find the credentials collection"
+          ansible.builtin.include_role:
+            name: get_sybers.cluster.cluster_pb_store
+            tasks_from: collection_facts
+        - name: "Refuse unless Phase A has been applied"
+          ansible.builtin.assert:
+            that:
+              - __pb_collection_present | bool
+              - __pb_collection_rules_match | bool
+            fail_msg: >-
+              gs_infra_credentials is missing or its API rules have drifted
+              (present={{ __pb_collection_present }},
+               rules_match={{ __pb_collection_rules_match }}).
+              creates and reconciles it — run
+              playbooks/cluster-pb-credentials-setup.yml first. Migrating
+              secrets into a collection whose read rules are not the ruled ones
+              would widen custody silently.
+            quiet: true
+        - name: "Read the current database_encryption_key"
+          ansible.builtin.slurp:
+            src: "{{ ludus_config_path }}"
+          register: __vm_cfg
+          no_log: true
+          check_mode: false
+        - name: "Derive the key in force (no_log)"
+          ansible.builtin.set_fact:
+            __vm_dek: >-
+              {{ (__vm_cfg.content | b64decode | from_yaml).database_encryption_key
+                 | default('', true) or dek_public_default }}
+          no_log: true
+        - name: "REFUSE to migrate onto the public default key"
+          ansible.builtin.assert:
+            that:
+              - (__vm_dek | length) == 32
+              - __vm_dek != dek_public_default
+            fail_msg: >-
+              Ludus is still running on the PUBLIC default
+              database_encryption_key (or the configured key is not 32 bytes:
+              length={{ __vm_dek | length }}). Migrating the vault's secrets
+              into the database now would DOWNGRADE them — from a
+              ZFS-encrypted dataset to effectively-plaintext at rest. Run
+              playbooks/cluster-dek-rotate.yml first (
+              recorded execution order and it is not optional.
+            success_msg: >-
+              database_encryption_key is set, 32 bytes, and is not the public
+              default — safe to encrypt with it.
+            quiet: true
+          no_log: true
+        - name: "List the vault directory (FILENAMES ONLY, no contents)"
+          ansible.builtin.find:
+            paths: "{{ vault_dir }}"
+            file_type: any
+            hidden: true
+            recurse: false
+            get_checksum: true
+            checksum_algorithm: sha256
+          register: __vm_listing
+          no_log: true
+          check_mode: false
+        - name: "CLASSIFY every entry (names -> hashed labels)"
+          ansible.builtin.set_fact:
+            __vm_all: >-
+              {%- set out = [] -%}
+              {%- set retire_names = vault_retire_entries | map(attribute='name') | list -%}
+              {%- for f in __vm_listing.files -%}
+              {%-   set n = f.path | basename -%}
+              {%-   set cls = 'KEEP' if n in vault_keep_entries
+                              else ('RETIRE' if n in retire_names else 'MIGRATE') -%}
+              {%-   set _ = out.append({
+                       'name': n,
+                       'path': f.path,
+                       'label': 'sha256:' ~ (n | hash('sha256'))[:12],
+                       'sha256': f.checksum | default(''),
+                       'class': cls}) -%}
+              {%- endfor -%}
+              {{ out }}
+          no_log: true
+        - name: "Split into the three working sets"
+          ansible.builtin.set_fact:
+            __vm_keep: "{{ __vm_all | selectattr('class', 'eq', 'KEEP') | list }}"
+            __vm_migrate: "{{ __vm_all | selectattr('class', 'eq', 'MIGRATE') | list }}"
+            __vm_retire: >-
+              {%- set out = [] -%}
+              {%- for e in __vm_all if e.class == 'RETIRE' -%}
+              {%-   set own = (vault_retire_entries
+                               | selectattr('name', 'eq', e.name) | first) -%}
+              {%-   set _ = out.append(e | combine({'ludus_own_path': own.ludus_own_path})) -%}
+              {%- endfor -%}
+              {{ out }}
+          no_log: true
+        - name: "Report the classification (COUNTS and LABELS only)"
+          ansible.builtin.debug:
+            msg:
+              vault_entries_total: "{{ __vm_all | length }}"
+              keep: "{{ __vm_keep | map(attribute='label') | list }}"
+              retire: "{{ __vm_retire | map(attribute='label') | list }}"
+              migrate_count: "{{ __vm_migrate | length }}"
+              migrate: "{{ __vm_migrate | map(attribute='label') | list }}"
+        - name: "The KEEP entry must actually be present"
+          ansible.builtin.assert:
+            that: (__vm_keep | length) == (vault_keep_entries | length)
+            fail_msg: >-
+              The vault does not contain the expected KEEP entr(y/ies)
+              ({{ vault_keep_entries | length }} expected,
+               {{ __vm_keep | length }} found). RA's key IS the invariant and
+              the bootstrap root-of-trust — its absence is a far larger finding
+              than this migration. STOP.
+            quiet: true
+        - name: "Every declared RETIRE entry must exist in the vault"
+          ansible.builtin.assert:
+            that: (__vm_retire | length) == (vault_retire_entries | length)
+            fail_msg: >-
+              {{ vault_retire_entries | length }} entr(y/ies) are declared
+              RETIRE but only {{ __vm_retire | length }} were found in the
+              vault. The declared filenames in vault_retire_entries do not
+              match what is on disk. Correct them — do NOT proceed, because a
+              name that matches nothing silently reclassifies a real secret.
+            quiet: true
+        - name: "Prove Ludus keeps its own copy of each retire candidate"
+          ansible.builtin.include_tasks: tasks/vault-retire-verify-one.yml
+          loop: "{{ __vm_retire }}"
+          loop_control:
+            label: "{{ item.label }}"
+        - name: "Read, encrypt, write, read back and verify each entry"
+          ansible.builtin.include_tasks: tasks/vault-migrate-one.yml
+          loop: "{{ __vm_migrate }}"
+          loop_control:
+            label: "{{ item.label }}"
+        - name: "Report (counts and labels only)"
+          ansible.builtin.debug:
+            msg:
+              migrated_and_verified: "{{ __vm_migrated | default([]) | length }}"
+              created: >-
+                {{ __vm_migrated | default([]) | selectattr('action', 'eq', 'created')
+                   | map(attribute='label') | list }}
+              updated_on_re_run: >-
+                {{ __vm_migrated | default([]) | selectattr('action', 'eq', 'updated')
+                   | map(attribute='label') | list }}
+              retire_candidates_verified: "{{ __vm_retired_verified | default([]) | length }}"
+              vault_still_intact: >-
+                Nothing has been removed. Removal is a separate opt-in:
+                -e vault_migrate_remove=true
+        - name: "Shred the migrated and retired entries (opt-in only)"
+          ansible.builtin.include_tasks: tasks/vault-remove-gated.yml
+          when: vault_migrate_remove | bool
+        - name: "Re-list the vault to prove the end state"
+          ansible.builtin.find:
+            paths: "{{ vault_dir }}"
+            file_type: any
+            hidden: true
+            recurse: false
+          register: __vm_final_listing
+          no_log: true
+          check_mode: false
+        - name: "Derive the expected and actual counts"
+          ansible.builtin.set_fact:
+            __vm_final_count: "{{ __vm_final_listing.files | length }}"
+            __vm_expected_count: >-
+              {{ (vault_keep_entries | length) if (vault_migrate_remove | bool)
+                 else (__vm_all | length) }}
+        - name: "Assert the vault holds exactly what it should"
+          ansible.builtin.assert:
+            that: (__vm_final_count | int) == (__vm_expected_count | int)
+            fail_msg: >-
+              VAULT END-STATE WRONG: {{ __vm_final_count }} entr(y/ies) present,
+              {{ __vm_expected_count }} expected
+              (removal {{ 'RAN' if (vault_migrate_remove | bool) else 'was NOT requested' }}).
+              {{ 'Some entries were not removed — re-check the removal step.'
+                 if (vault_migrate_remove | bool)
+                 else 'Entries disappeared WITHOUT the removal opt-in. That is a
+                       finding, not a convenience — investigate before re-running.' }}
+            success_msg: >-
+              Vault end state as expected: {{ __vm_final_count }} entr(y/ies).
+            quiet: true
+        - name: "Run the standing invariant check, unmodified"
+          ansible.builtin.include_tasks: tasks/vault-invariant-compose.yml
+          when: vault_migrate_remove | bool
+        - name: "What happens next"
+          ansible.builtin.debug:
+            msg: >-
+              {{ __vm_migrated | default([]) | length }} entr(y/ies) migrated into
+              gs_infra_credentials and verified;
+              {{ __vm_retired_verified | default([]) | length }} retire candidate(s) confirmed
+              to have a live Ludus-side copy.
+              {{ 'Removal RAN: the vault is now at the ruled invariant, and
+                  cluster-vault-invariant.yml PASSES. Flip
+                  reconcile_verify_vault_invariant to default true in
+                  post-update-reconcile.yml as the closing step of the
+                  migration.'
+                 if (vault_migrate_remove | bool)
+                 else 'Removal did NOT run — every vault entry is still in
+                       place, deliberately. Re-run with -e
+                       vault_migrate_remove=true when ready to shred the
+                       migrated and retired entries.' }}
+      rescue:
+        - name: "REPORT: the original failure AND what exists now"
+          ansible.builtin.debug:
+            msg:
+              original_failure_task: "{{ ansible_failed_task.name | default('(unknown)') }}"
+              original_failure: >-
+                {{ ansible_failed_result.msg
+                   | default(ansible_failed_result.stderr
+                             | default('(no message — the failing task was no_log; isolate it and re-run)')) }}
+              entries_classified: "{{ __vm_all | default([]) | length }}"
+              migrated_and_verified_before_the_failure: >-
+                {{ __vm_migrated | default([]) | map(attribute='label') | list }}
+              retire_candidates_verified: >-
+                {{ __vm_retired_verified | default([]) | map(attribute='label') | list }}
+              removal_requested: "{{ vault_migrate_remove | bool }}"
+              nothing_was_deleted: >-
+                TRUE. This play removes nothing on a failure path, and the
+                removal step is opt-in and runs only after every migration is
+                verified. Every vault entry is still on disk; any record
+                already written to gs_infra_credentials was read back and
+                verified before this failure, and a re-run converges on it
+                rather than duplicating it.
+        - name: "Fail loudly, carrying the original failure forward"
+          ansible.builtin.fail:
+            msg: >-
+              VAULT MIGRATION FAILED at
+              '{{ ansible_failed_task.name | default('(unknown)') }}'.
+              Nothing was deleted;
+              {{ __vm_migrated | default([]) | length }} entr(y/ies) had already
+              been migrated and verified. See the report above, fix the cause,
+              and re-run — the play is re-runnable by construction.

@@ -1,0 +1,20 @@
+---
+galaxy_info:
+  role_name: cluster_plugin_packer
+  namespace: get_sybers
+  author: Get-Sybers
+  description: >-
+    Reproduce the packer plugin state under /opt/ludus/resources/packer/plugins
+    on the cluster host. `ludus-server --update` never restores this directory
+    and its own refresh path can only upgrade plugins that already exist — and
+    deletes before it downloads — so an absent or half-updated plugin tree
+    breaks every template build with "Unknown source type proxmox-iso". This
+    role installs the pinned set idempotently and never deletes anything.
+  company: Get-Sybers
+  license: AGPL-3.0-only
+  min_ansible_version: "2.19.0"
+  platforms:
+    - name: Debian
+      versions: [bookworm, trixie]
+  galaxy_tags: [packer, plugins, proxmox, ludus, cluster]
+dependencies: []

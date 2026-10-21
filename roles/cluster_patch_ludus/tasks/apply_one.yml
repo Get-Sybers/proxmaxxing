@@ -1,0 +1,42 @@
+---
+- name: "apply_one | {{ patch.id ~ ' ' ~ patch.file }}"
+  ansible.builtin.slurp:
+    src: "{{ cluster_patch_ludus_root }}/{{ patch.file }}"
+  register: __p_raw
+- name: "apply_one | {{ patch.id }}"
+  ansible.builtin.set_fact:
+    __p_content: "{{ __p_raw.content | b64decode }}"
+- name: "apply_one | {{ patch.id }}"
+  ansible.builtin.set_fact:
+    __p_applied: "{{ patch.marker in __p_content }}"
+- name: "apply_one | {{ patch.id ~ ' — ' ~ patch.why }}"
+  when: not __p_applied
+  block:
+    - name: "apply_one | The stock text must be present | {{ patch.id }}"
+      ansible.builtin.assert:
+        that: patch.stock in __p_content
+        fail_msg: >-
+          {{ patch.id }} ({{ patch.err }}): the expected stock text was NOT found
+          in {{ patch.file }}, and the marker is absent too. Upstream text has
+          changed — re-derive this patch against the new stock file rather than
+          forcing it.
+        quiet: true
+    - name: "apply_one | {{ patch.id }}"
+      ansible.builtin.set_fact:
+        __p_new: "{{ __p_content | replace(patch.stock, patch.patched) }}"
+    - name: "apply_one | {{ patch.id }}"
+      ansible.builtin.assert:
+        that: __p_new != __p_content
+        fail_msg: "{{ patch.id }}: replace produced identical content."
+        quiet: true
+    - name: "apply_one | {{ patch.id ~ ' ' ~ patch.file }}"
+      ansible.builtin.copy:
+        content: "{{ __p_new }}"
+        dest: "{{ cluster_patch_ludus_root }}/{{ patch.file }}"
+        owner: "{{ cluster_patch_ludus_file_owner }}"
+        group: "{{ cluster_patch_ludus_file_group }}"
+        mode: "{{ cluster_patch_ludus_file_mode }}"
+- name: "apply_one | {{ patch.id }}"
+  ansible.builtin.debug:
+    msg: "{{ patch.id }} ({{ patch.err }}): marker present in {{ patch.file }} — no-op."
+  when: __p_applied

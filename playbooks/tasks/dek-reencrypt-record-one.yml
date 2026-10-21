@@ -1,0 +1,80 @@
+---
+- name: "dek-reencrypt-record-one | Read the record"
+  ansible.builtin.include_role:
+    name: get_sybers.cluster.cluster_pb_store
+    tasks_from: record_read_id
+  vars:
+    cluster_pb_store_record_id: "{{ item }}"
+- name: "dek-reencrypt-record-one | Capture the ORIGINAL (old-key) ciphertext for rollback (no_log)"
+  ansible.builtin.set_fact:
+    __dek_records_captured: >-
+      {{ __dek_records_captured | default([]) + [{'id': item, 'ct': __pb_record_read_value}] }}
+  no_log: true
+- name: "dek-reencrypt-record-one | Capture the plaintext fingerprint under the OLD key"
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ __dek_helper }}"
+  args:
+    stdin: >-
+      {{ {'op': 'decrypt', 'key': __dek_old_key, 'data': __pb_record_read_value}
+         | to_json }}
+    stdin_add_newline: false
+  register: __dek_rec_before
+  no_log: true
+  check_mode: false
+  changed_when: false
+- name: "dek-reencrypt-record-one | Re-encrypt under the NEW key"
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ __dek_helper }}"
+  args:
+    stdin: >-
+      {{ {'op': 'reencrypt', 'old_key': __dek_old_key, 'new_key': __dek_new_key,
+          'data': __pb_record_read_value} | to_json }}
+    stdin_add_newline: false
+  register: __dek_rec_re
+  no_log: true
+  check_mode: false
+  changed_when: false
+- name: "dek-reencrypt-record-one | Write it back"
+  ansible.builtin.include_role:
+    name: get_sybers.cluster.cluster_pb_store
+    tasks_from: record_update
+  vars:
+    cluster_pb_store_record_id: "{{ item }}"
+    cluster_pb_store_record_value: "{{ (__dek_rec_re.stdout | from_json).data }}"
+    cluster_pb_store_record_note: "re-encrypted under the rotated database_encryption_key (#173)"
+- name: "dek-reencrypt-record-one | Read it back"
+  ansible.builtin.include_role:
+    name: get_sybers.cluster.cluster_pb_store
+    tasks_from: record_read_id
+  vars:
+    cluster_pb_store_record_id: "{{ item }}"
+- name: "dek-reencrypt-record-one | Open the persisted value under the NEW key"
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ __dek_helper }}"
+  args:
+    stdin: >-
+      {{ {'op': 'decrypt', 'key': __dek_new_key, 'data': __pb_record_read_value}
+         | to_json }}
+    stdin_add_newline: false
+  register: __dek_rec_after
+  no_log: true
+  check_mode: false
+  changed_when: false
+- name: "dek-reencrypt-record-one | Assert the plaintext survived the re-encryption"
+  ansible.builtin.assert:
+    that: (__dek_rec_after.stdout | hash('sha256')) == (__dek_rec_before.stdout | hash('sha256'))
+    fail_msg: >-
+      RE-ENCRYPTION MISMATCH on gs_infra_credentials record id {{ item }}:
+      the value stored under the new key does not recover the plaintext read
+      under the old one. The stored credential is now unrecoverable from this
+      record — restore it from its original source before anything consumes it.
+    success_msg: >-
+      gs_infra_credentials record id {{ item }}: re-encrypted and read back to
+      the identical plaintext.
+    quiet: true

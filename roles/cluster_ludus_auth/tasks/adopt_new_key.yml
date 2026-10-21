@@ -1,0 +1,5 @@
+---
+- name: "adopt_new_key | Adopt the minted key as the acting key (no_log)"
+  ansible.builtin.set_fact:
+    __cla_api_key: "{{ __cla_new_key }}"
+  no_log: true

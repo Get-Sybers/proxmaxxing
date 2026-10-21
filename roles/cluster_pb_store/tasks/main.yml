@@ -1,0 +1,19 @@
+---
+- name: "Superadmin surface reachable (assert, don't manage)"
+  ansible.builtin.include_tasks: preflight.yml
+- name: "Authenticate as the PB superuser"
+  ansible.builtin.include_tasks: auth_superuser.yml
+- name: "Fact-find the credentials collection"
+  ansible.builtin.include_tasks: collection_facts.yml
+- name: "Create the collection"
+  ansible.builtin.include_tasks: collection_create.yml
+  when: not (__pb_collection_present | bool)
+- name: "Reconcile drifted API rules"
+  ansible.builtin.include_tasks: collection_update_rules.yml
+  when:
+    - __pb_collection_present | bool
+    - not (__pb_collection_rules_match | bool)
+- name: "Re-probe after any change"
+  ansible.builtin.include_tasks: collection_facts.yml
+- name: "Verify the desired end state"
+  ansible.builtin.include_tasks: collection_verify.yml

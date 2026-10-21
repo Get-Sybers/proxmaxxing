@@ -1,0 +1,47 @@
+---
+- name: "prove_caller | Prove the caller's key against the Ludus API (/whoami)"
+  ansible.builtin.uri:
+    url: "{{ cluster_ludus_auth_api_url }}/whoami"
+    method: GET
+    headers:
+      X-API-KEY: "{{ __cla_api_key }}"
+    validate_certs: false
+    status_code: [200, 401, 403]
+    return_content: true
+  register: __cla_caller_whoami
+  failed_when: false
+  no_log: true
+  check_mode: false
+- name: "prove_caller | Derive the NON-SECRET caller identity"
+  ansible.builtin.set_fact:
+    __cla_caller_status: "{{ __cla_caller_whoami.status | default(0) }}"
+    __cla_caller_user: >-
+      {{ ((__cla_caller_whoami.content | from_json).user.userID | default(''))
+         if ((__cla_caller_whoami.status | default(0) | int) == 200
+             and (__cla_caller_whoami.content | default('') | trim).startswith('{'))
+         else '' }}
+    __cla_caller_admin: >-
+      {{ ((__cla_caller_whoami.content | from_json).user.isAdmin | default(false) | bool)
+         if ((__cla_caller_whoami.status | default(0) | int) == 200
+             and (__cla_caller_whoami.content | default('') | trim).startswith('{'))
+         else false }}
+  no_log: true
+- name: "prove_caller | Assert the Ludus API accepted the caller's key"
+  ansible.builtin.assert:
+    that: __cla_caller_status | int == 200
+    fail_msg: >-
+      The Ludus API rejected the exported LUDUS_API_KEY (HTTP
+      {{ __cla_caller_status }}). It is stale or wrong — export a live admin key
+      (any Ludus admin identity) and re-run. The play reads credentials only from the API,
+      so a bad exported key is the one thing it cannot work around.
+    quiet: true
+- name: "prove_caller | Assert the caller is a Ludus admin (needed to read the store)"
+  ansible.builtin.assert:
+    that: __cla_caller_admin | bool
+    fail_msg: >-
+      The exported key authenticates as '{{ __cla_caller_user }}', which is NOT a
+      Ludus admin. Reading the credential store over the API requires an admin
+      identity (the collection's list/view rule is isAdmin=true). Export an
+      admin identity's key.
+    success_msg: "Caller authenticated as userID={{ __cla_caller_user }} (admin)."
+    quiet: true

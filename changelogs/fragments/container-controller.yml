@@ -1,0 +1,17 @@
+---
+added:
+  - >-
+    Containerized Ansible controller under ``container/``. A Debian trixie
+    ``Containerfile`` (same base digest as the molecule substrate) builds an
+    image holding ``ansible-core`` 2.21, the Galaxy collections baked from
+    ``requirements.yml`` (the single source of pins), and the Python SDKs those
+    collections need at runtime (``proxmoxer``, ``requests``) plus
+    ``ansible-lint``/``yamllint``. A ``run.sh``
+    wrapper drives it on Apple's ``container`` runtime (macOS): it bind-mounts
+    ``ansible/`` so edits need no rebuild, mounts ``~/.ssh`` read-only, and
+    forwards the ``PROXMOX_*``/``ANSIBLE_*`` env vars. The image
+    runs the SSH-based cluster plays, ``--syntax-check`` and lint; the
+    ``localhost`` credential/vault plays still belong on the master node. Built
+    for Apple ``container`` but the ``Containerfile`` is plain OCI and builds
+    under Docker or Podman unchanged. Excluded from the built collection via
+    ``galaxy.yml`` ``build_ignore``.

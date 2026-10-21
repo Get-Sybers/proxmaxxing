@@ -1,0 +1,36 @@
+---
+argument_specs:
+  main:
+    short_description: "Install the pinned packer plugins under the Ludus plugin root idempotently; never deletes anything."
+    description:
+      - >-
+        Reproduces the packer plugin state that ludus-server --update never
+        restores, installing each pinned plugin side-by-side via
+        `packer plugins install`, re-verifying the on-disk binary, and asserting
+        the stock ownership back onto the tree. A present, verified plugin is a
+        no-op.
+    options:
+      cluster_plugin_packer_root:
+        type: str
+        required: false
+        default: "/opt/ludus/resources/packer/plugins"
+        description: "The plugin root packer resolves from (PACKER_PLUGIN_PATH) — the path ludus-server --update never restores."
+      cluster_plugin_packer_owner:
+        type: str
+        required: false
+        default: "ludus"
+        description: "Owner asserted back onto the plugin tree after install (install runs as root; stock is ludus:users)."
+      cluster_plugin_packer_group:
+        type: str
+        required: false
+        default: "users"
+        description: "Group asserted back onto the plugin tree (the ludus user's primary group is users)."
+      cluster_plugin_packer_list:
+        type: list
+        required: false
+        default:
+          - source: github.com/badsectorlabs/proxmox
+            version: "1.2.4"
+          - source: github.com/hashicorp/ansible
+            version: "1.1.1"
+        description: "The pinned plugin set — a list of {source, version}. Each on-disk binary is re-verified against its recorded SHA256SUM."

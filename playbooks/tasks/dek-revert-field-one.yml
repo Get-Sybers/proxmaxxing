@@ -1,0 +1,9 @@
+---
+- name: "dek-revert-field-one | Restore to its captured ciphertext — {{ item.userID ~ '.' ~ item.field }}"
+  ansible.builtin.include_role:
+    name: get_sybers.cluster.cluster_pb_store
+    tasks_from: record_patch_fields
+  vars:
+    cluster_pb_store_collection_name: users
+    cluster_pb_store_record_id: "{{ item.id }}"
+    cluster_pb_store_record_fields: "{{ {item.field: item.ct} }}"

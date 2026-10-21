@@ -1,0 +1,149 @@
+---
+- name: "Cluster-tier preflight (root + PVE cluster node)"
+  ansible.builtin.include_role:
+    name: get_sybers.cluster.cluster_preflight
+  vars:
+    cluster_preflight_require_api_admin: false
+    cluster_preflight_delegate_to: "{{ cluster_ceph_orphan_sweep_delegate_to }}"
+- name: "Preflight — rbd, pvesh and ceph are usable"
+  ansible.builtin.command: "{{ item }}"
+  loop:
+    - rbd --version
+    - pvesh get /version --output-format json
+    - ceph health
+  register: __cos_pre
+  changed_when: false
+  check_mode: false
+  failed_when: __cos_pre.rc != 0
+  delegate_to: "{{ cluster_ceph_orphan_sweep_delegate_to }}"
+- name: "Preflight — the pool exists"
+  ansible.builtin.command: "rbd ls {{ cluster_ceph_orphan_sweep_pool }}"
+  register: __cos_rbd_ls
+  changed_when: false
+  check_mode: false
+  delegate_to: "{{ cluster_ceph_orphan_sweep_delegate_to }}"
+- name: "Candidate per-VM disk images in the pool"
+  ansible.builtin.set_fact:
+    __cos_vm_images: "{{ __cos_rbd_ls.stdout_lines | select('match', '^vm-[0-9]+-disk-[0-9]+$') | list }}"
+- name: "Enumerate PVE storage"
+  ansible.builtin.command: pvesh get /storage --output-format json
+  register: __cos_storage
+  changed_when: false
+  check_mode: false
+  delegate_to: "{{ cluster_ceph_orphan_sweep_delegate_to }}"
+- name: "FAIL-CLOSED — exactly one storage backs the pool, named for it"
+  ansible.builtin.assert:
+    that:
+      - __cos_pool_storages | length == 1
+      - __cos_pool_storages | first == cluster_ceph_orphan_sweep_pool
+    fail_msg: >-
+      The pool {{ cluster_ceph_orphan_sweep_pool }} is backed by storage-ID(s)
+      {{ __cos_pool_storages }}, not a single storage named for the pool. Gate 2
+      matches on the storage-ID prefix, so a divergent mapping could miss a
+      referenced disk. Refusing to sweep.
+    quiet: true
+  vars:
+    __cos_pool_storages: >-
+      {{ __cos_storage.stdout | from_json
+         | selectattr('type', 'equalto', 'rbd')
+         | selectattr('pool', 'defined')
+         | selectattr('pool', 'equalto', cluster_ceph_orphan_sweep_pool)
+         | map(attribute='storage') | list }}
+- name: "Enumerate every live guest in the cluster (all nodes, any power state)"
+  ansible.builtin.command: pvesh get /cluster/resources --type vm --output-format json
+  register: __cos_vms
+  changed_when: false
+  check_mode: false
+  delegate_to: "{{ cluster_ceph_orphan_sweep_delegate_to }}"
+- name: "Set the live guest list (vmid + node + type)"
+  ansible.builtin.set_fact:
+    __cos_live: >-
+      {{ __cos_vms.stdout | from_json
+         | selectattr('vmid', 'defined')
+         | selectattr('type', 'in', ['qemu', 'lxc'])
+         | list }}
+- name: "Read every live guest config (VM /qemu/, CT /lxc/) for the referenced-disk set"
+  ansible.builtin.command: "pvesh get /nodes/{{ item.node }}/{{ item.type }}/{{ item.vmid }}/config --output-format json"
+  loop: "{{ __cos_live }}"
+  loop_control:
+    label: "{{ item.type }} {{ item.vmid }} on {{ item.node }}"
+  register: __cos_cfgs
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  delegate_to: "{{ cluster_ceph_orphan_sweep_delegate_to }}"
+- name: "FAIL-CLOSED — the live-guest read set must be complete"
+  ansible.builtin.assert:
+    that:
+      - __cos_live | length > 0
+      - __cos_live | length == (__cos_vms.stdout | from_json | length)
+      - __cos_cfgs.results | rejectattr('rc', 'equalto', 0) | list | length == 0
+    fail_msg: >-
+      Refusing to sweep — the referenced-disk set would be incomplete and mark
+      in-use disks as orphans. live={{ __cos_live | length }},
+      total={{ __cos_vms.stdout | from_json | length }},
+      failed_reads={{ __cos_cfgs.results | rejectattr('rc', 'equalto', 0) | map(attribute='item') | map(attribute='vmid') | list }}.
+      No image has been touched.
+    quiet: true
+- name: "Build the referenced-image set from all live configs"
+  ansible.builtin.set_fact:
+    __cos_referenced: >-
+      {{ __cos_cfgs.results
+         | map(attribute='stdout') | map('from_json')
+         | map('dict2items') | flatten
+         | selectattr('key', 'match', '^(scsi|sata|ide|virtio|efidisk|tpmstate|unused)[0-9]*$|^rootfs$|^mp[0-9]+$|^vmstate$')
+         | map(attribute='value') | select('string')
+         | select('search', cluster_ceph_orphan_sweep_pool ~ ':')
+         | map('regex_replace', '^.*' ~ cluster_ceph_orphan_sweep_pool ~ ':', '')
+         | map('regex_replace', ',.*$', '')
+         | map('regex_replace', '^.*/', '')
+         | list | unique }}
+- name: "FAIL-CLOSED — the referenced set must look like real image names"
+  ansible.builtin.assert:
+    that:
+      - __cos_referenced | length > 0
+      - __cos_referenced | reject('match', '^(vm|base)-[0-9]+-') | list | length == 0
+    fail_msg: >-
+      Referenced-image set is {{ __cos_referenced }}. Either extraction misfired (entries
+      that are not vm-/base- image names) or no live guest references a disk on
+      {{ cluster_ceph_orphan_sweep_pool }} (an empty set). Refusing to sweep; no image touched.
+    quiet: true
+- name: "Orphan candidates (not referenced by any live guest config)"
+  ansible.builtin.set_fact:
+    __cos_candidates: "{{ __cos_vm_images | reject('in', __cos_referenced) | list }}"
+- name: "Report candidates"
+  ansible.builtin.debug:
+    msg: >-
+      {{ __cos_candidates | length }} orphan candidate(s):
+      {{ __cos_candidates | join(', ') if __cos_candidates else '(none — pool clean)' }}
+- name: "Check each candidate for RBD watchers (a mapped disk has one)"
+  ansible.builtin.command: "rbd status {{ cluster_ceph_orphan_sweep_pool }}/{{ item }} --format json"
+  loop: "{{ __cos_candidates }}"
+  register: __cos_watch
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  delegate_to: "{{ cluster_ceph_orphan_sweep_delegate_to }}"
+- name: "Reduce to unwatched candidates"
+  ansible.builtin.set_fact:
+    __cos_to_remove: >-
+      {{ __cos_watch.results
+         | selectattr('rc', 'equalto', 0)
+         | rejectattr('stdout', 'search', '"address"')
+         | map(attribute='item') | list }}
+- name: "What will be removed"
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'Would remove' if (ansible_check_mode or cluster_ceph_orphan_sweep_preview_only | bool) else 'Removing' }}
+      {{ __cos_to_remove | length }} unwatched orphan disk(s) via direct rbd rm:
+      {{ __cos_to_remove | join(', ') if __cos_to_remove else '(none)' }}
+- name: "Apply removals (rbd rm + verify)"
+  ansible.builtin.include_tasks: apply.yml
+  when: not (cluster_ceph_orphan_sweep_preview_only | bool)
+- name: "Summary"
+  ansible.builtin.debug:
+    msg: >-
+      ERR-20/
+      {{ __cos_candidates | length }} candidate(s),
+      {{ __cos_to_remove | length }} unwatched,
+      {{ (__cos_candidates | length) - (__cos_to_remove | length) }} skipped (had watchers).

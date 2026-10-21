@@ -1,0 +1,38 @@
+---
+- name: "ludus_user_key | User key — assert an identity was named"
+  ansible.builtin.assert:
+    that:
+      - cluster_secrets_ludus_user_id is defined
+      - cluster_secrets_ludus_user_id | length > 0
+    fail_msg: "cluster_secrets_ludus_user_id must be set (e.g. RA, muzz)."
+    quiet: true
+- name: "ludus_user_key | User key — resolve the vault path for {{ cluster_secrets_ludus_user_id }}"
+  ansible.builtin.set_fact:
+    __isuk_path: "{{ infra_secrets_user_key_path | default(cluster_secrets_vault_dir ~ '/' ~ cluster_secrets_ludus_user_id ~ '.apikey') }}"
+- name: "ludus_user_key | Read the user key from the vault — {{ cluster_secrets_ludus_user_id }}"
+  ansible.builtin.include_tasks: get.yml
+  vars:
+    cluster_secrets_backend: file
+    cluster_secrets_request:
+      name: "{{ cluster_secrets_ludus_user_id }}.apikey"
+      path: "{{ __isuk_path }}"
+      regex: "{{ cluster_secrets_ludus_user_id }}\\.[^\\s]+"
+      required: true
+- name: "ludus_user_key | User key — expose as cluster_secrets_ludus_user_api_key"
+  ansible.builtin.set_fact:
+    cluster_secrets_ludus_user_api_key: "{{ cluster_secrets_result.value }}"
+    cluster_secrets_ludus_user_api_key_id: "{{ cluster_secrets_ludus_user_id }}"
+  no_log: true
+- name: "ludus_user_key | User key — the key must belong to the identity requested"
+  ansible.builtin.assert:
+    that: cluster_secrets_ludus_user_api_key.startswith(cluster_secrets_ludus_user_id ~ '.')
+    fail_msg: >-
+      The key read from {{ __isuk_path }} does not belong to
+      '{{ cluster_secrets_ludus_user_id }}'. Wrong file, or the file holds another identity.
+    quiet: true
+  no_log: true
+- name: "ludus_user_key | User key — report SHAPE only"
+  ansible.builtin.debug:
+    msg: >-
+      cluster_secrets_ludus_user_api_key set for '{{ cluster_secrets_ludus_user_id }}' from {{ __isuk_path }},
+      length={{ cluster_secrets_ludus_user_api_key | length }}.

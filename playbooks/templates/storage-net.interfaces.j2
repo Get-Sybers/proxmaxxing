@@ -1,0 +1,10 @@
+# {{ ansible_managed }}
+{% for l in __links %}
+{{ 'allow-hotplug' if l.hotplug else 'auto' }} {{ l.iface }}
+iface {{ l.iface }} inet static
+    address {{ l.address }}
+    mtu {{ l.mtu }}
+{% if l.ethtool_off is defined %}
+    post-up {% for f in l.ethtool_off.split() %}ethtool -K {{ l.iface }} {{ f }} off; {% endfor %}true
+{% endif %}
+{% endfor %}

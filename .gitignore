@@ -1,0 +1,52 @@
+# --- secrets: never committed (ansible-standards §9, §20) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.vault-pass
+vault_password*
+.secrets/
+# --- site configuration: only inventory/example/ is tracked (make config) ---
+/inventory/hosts.yml
+/inventory/group_vars/
+/inventory/host_vars/
+/inventory/discovered/
+# --- editors / OS ---
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+# --- tool caches ---
+.cache/
+.lycheecache
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+__pycache__/
+.tox/
+.nox/
+.venv/
+venv/
+node_modules/
+# --- build output (language templates add their own, e.g. Go adds /bin/) ---
+dist/
+build/
+*.log
+*.tmp
+coverage.*
+*.sarif
+sbom.*.json
+# Ansible
+*.retry
+/dist/
+/tests/output/
+/changelogs/.plugin-cache.yaml
+/.ansible/
+# ansible-lint / ansible-compat install the collection under test here
+/collections/

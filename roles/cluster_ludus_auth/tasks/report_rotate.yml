@@ -1,0 +1,14 @@
+---
+- name: "report_rotate | Report the rotation result (shape only)"
+  ansible.builtin.debug:
+    msg:
+      rotated_user: "{{ cluster_ludus_auth_mint_target }}"
+      new_key_length: "{{ __cla_new_key | length }}"
+      persisted_to: >-
+        gs_infra_credentials record
+        sha256:{{ (cluster_ludus_auth_mint_target ~ '.apikey') | hash('sha256') | truncate(12, true, '') }}
+        (AES-256-GCM under the rotated DEK), round-trip verified
+      store_outcome: "{{ __vm_migrated | default([]) }}"
+      new_key_authenticates: >-
+        HTTP {{ cluster_ludus_auth_status }} as
+        userID={{ cluster_ludus_auth_user }}

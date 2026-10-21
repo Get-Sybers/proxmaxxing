@@ -1,0 +1,95 @@
+---
+- name: "install | Stat the key install artifacts"
+  ansible.builtin.stat:
+    path: "{{ cluster_ludus_install_root }}/{{ item }}"
+  loop:
+    - config.yml
+    - install/root-api-key
+    - ludus-server
+  register: __cli_stat
+  loop_control:
+    label: "{{ item }}"
+
+- name: "install | Record what is already on disk (non-secret)"
+  ansible.builtin.set_fact:
+    __cli_config_present: "{{ (__cli_stat.results | selectattr('item', 'equalto', 'config.yml') | first).stat.exists }}"
+    __cli_rootkey_present: "{{ (__cli_stat.results | selectattr('item', 'equalto', 'install/root-api-key') | first).stat.exists }}"
+
+- name: "install | A usable install is present when config.yml and the ROOT key both exist"
+  ansible.builtin.set_fact:
+    __cli_installed: "{{ __cli_config_present | bool and __cli_rootkey_present | bool }}"
+
+- name: "install | Refuse to proceed without an install unless the installer is enabled"
+  ansible.builtin.assert:
+    that: __cli_installed | bool or cluster_ludus_install_run_installer | bool
+    fail_msg: >-
+      No Ludus install found at {{ cluster_ludus_install_root }}
+      (config.yml present={{ __cli_config_present }},
+      root-api-key present={{ __cli_rootkey_present }}) and
+      cluster_ludus_install_run_installer is false. Either install Ludus first
+      (download ludus-server and run it on this node — on an EXISTING Proxmox
+      host it installs without a reboot), or re-run with
+      -e cluster_ludus_install_run_installer=true and
+      -e cluster_ludus_install_binary_url=<url> so this role installs it.
+    quiet: true
+
+- name: "install | Download and run the official installer (first install only)"
+  when:
+    - not __cli_installed | bool
+    - cluster_ludus_install_run_installer | bool
+  block:
+    - name: "install | The installer binary URL is required to install"
+      ansible.builtin.assert:
+        that: cluster_ludus_install_binary_url | length > 0
+        fail_msg: >-
+          cluster_ludus_install_run_installer is true but
+          cluster_ludus_install_binary_url is empty. Point it at the ludus-server
+          binary for the release you want to install.
+        quiet: true
+
+    - name: "install | Ensure the install root exists"
+      ansible.builtin.file:
+        path: "{{ cluster_ludus_install_root }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: "install | Download the ludus-server binary"
+      ansible.builtin.get_url:
+        url: "{{ cluster_ludus_install_binary_url }}"
+        dest: "{{ cluster_ludus_install_root }}/ludus-server"
+        checksum: "{{ cluster_ludus_install_binary_checksum | default(omit, true) }}"
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: "install | Run the installer non-interactively (no reboot on an existing Proxmox host)"
+      ansible.builtin.command:
+        cmd: "{{ cluster_ludus_install_root }}/ludus-server --no-prompt"
+        chdir: "{{ cluster_ludus_install_root }}"
+        creates: "{{ cluster_ludus_install_root }}/install/root-api-key"
+      register: __cli_installer
+      # First-run installer prints the ROOT API key to stdout — never log it.
+      no_log: true
+
+    - name: "install | Re-stat the artifacts the installer must create"
+      ansible.builtin.stat:
+        path: "{{ cluster_ludus_install_root }}/{{ item }}"
+      loop:
+        - config.yml
+        - install/root-api-key
+      register: __cli_verify
+      loop_control:
+        label: "{{ item }}"
+
+    - name: "install | The installer must have produced config.yml and the ROOT key"
+      ansible.builtin.assert:
+        that: __cli_verify.results | map(attribute='stat.exists') | select | list | length == 2
+        fail_msg: >-
+          The installer ran but
+          {{ __cli_verify.results | rejectattr('stat.exists') | map(attribute='item') | list }}
+          is still missing under {{ cluster_ludus_install_root }}. On a brand-new
+          Debian host (not yet Proxmox) the installer reboots part-way and must be
+          re-run after the reboot — run it attended in that case.
+        quiet: true

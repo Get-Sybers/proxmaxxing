@@ -1,0 +1,11 @@
+---
+# cluster_discover negative — on a host that is not a PVE node the role must
+# stop at the admission gate before reading anything. The Debian test container
+# is exactly such a host. No prepare; converge drives the controlled failure.
+scenario:
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - converge
+    - destroy

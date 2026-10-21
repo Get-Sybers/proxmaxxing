@@ -1,0 +1,76 @@
+---
+- name: "Authenticate to Ludus as range-admin (key read only from the API)"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: "Refuse --check"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: refuse_check
+    - name: "Cluster admission gate (root + PVE node)"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_preflight
+    - name: "Require an exported admin key (the only supplied secret)"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: require_caller_key
+    - name: "Prove the caller's key against the Ludus API (/whoami)"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: prove_caller
+    - name: "Read the target identity's key from the store (PocketBase API)"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: credential_fetch_apikey
+      vars:
+        cluster_ludus_auth_record: "{{ ludus_identity }}.apikey"
+      when: __cla_caller_user != ludus_identity
+    - name: "Read Ludus's database_encryption_key (to decrypt the record)"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: dek_read
+      when: __cla_caller_user != ludus_identity
+    - name: "Decrypt the fetched record into the acting key"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: credential_decrypt
+      vars:
+        cluster_ludus_auth_identity: "{{ ludus_identity }}"
+      when: __cla_caller_user != ludus_identity
+    - name: "Prove the acting key against the Ludus API (/whoami)"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: whoami
+      vars:
+        cluster_ludus_auth_identity: "{{ ludus_identity }}"
+    - name: "Require a Ludus admin"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: require_admin
+    - name: "Write the ludus CLI server settings (url, no key)"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: cli_config_write
+      when: ludus_write_cli_config | bool
+    - name: "Write the proven key to the sourceable env file"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: env_file_write
+      when: ludus_write_cli_config | bool
+    - name: "Report the result (shape only, never key bytes)"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: report_auth
+      vars:
+        cluster_ludus_auth_identity: "{{ ludus_identity }}"
+        cluster_ludus_auth_record: "{{ ludus_identity }}.apikey"
+    - name: "Say how to finish authenticating this shell"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: report_shell
+      when: ludus_write_cli_config | bool
+    - name: "Forget every secret fact"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: forget

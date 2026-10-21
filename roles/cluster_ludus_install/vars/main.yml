@@ -1,0 +1,35 @@
+---
+# Role-internal data (not inputs): the config.yml keys this role reconciles, and
+# the exact scalar each is written as. Values are lazily templated from the
+# defaults so a caller overrides the input, never this list. database_encryption_key,
+# the ports, the license key and data_directory are deliberately ABSENT — they are
+# whatever the installer set and must not be rewritten.
+cluster_ludus_install_managed_keys:
+  - key: proxmox_node
+    value: "{{ cluster_ludus_install_proxmox_node }}"
+  - key: proxmox_vm_storage_pool
+    value: "{{ cluster_ludus_install_vm_storage_pool }}"
+  - key: proxmox_vm_storage_format
+    value: "{{ cluster_ludus_install_vm_storage_format }}"
+  - key: proxmox_iso_storage_pool
+    value: "{{ cluster_ludus_install_iso_storage_pool }}"
+  - key: reserved_range_numbers
+    value: "{{ cluster_ludus_install_reserved_range_numbers | to_json }}"
+  - key: cluster_mode
+    value: "{{ cluster_ludus_install_cluster_mode | bool | lower }}"
+  - key: sdn_zone
+    value: "{{ cluster_ludus_install_sdn_zone }}"
+  - key: vxlan_tag_base
+    value: "{{ cluster_ludus_install_vxlan_tag_base | int }}"
+
+# Host network keys — reconciled ONLY when cluster_ludus_install_manage_network
+# is true (see defaults/main.yml and run-sheet caution C1).
+cluster_ludus_install_network_keys:
+  - key: proxmox_interface
+    value: "{{ cluster_ludus_install_net_interface }}"
+  - key: proxmox_local_ip
+    value: "{{ cluster_ludus_install_net_local_ip }}"
+  - key: proxmox_gateway
+    value: "{{ cluster_ludus_install_net_gateway }}"
+  - key: proxmox_netmask
+    value: "{{ cluster_ludus_install_net_netmask }}"

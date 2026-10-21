@@ -1,0 +1,32 @@
+---
+- name: Converge (expect a controlled failure)
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: An empty artefact list must stop at the role's entry assertion
+      block:
+        - name: Run sysmon_linux with no staged artefacts
+          ansible.builtin.include_role:
+            name: get_sybers.cluster.sysmon_linux
+          vars:
+            sysmon_linux_artefacts: []
+      rescue:
+        - name: The role stopped at its empty-artefacts assertion
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result is defined
+              - "'sysmon_linux_artefacts is empty' in (ansible_failed_result.msg | default(''))"
+            fail_msg: >-
+              failed, but not at the empty-artefacts entry assertion:
+              {{ ansible_failed_result | default({}) }}
+            quiet: true
+        - name: Record the controlled failure
+          ansible.builtin.set_fact:
+            __sml_failed_cleanly: true
+    - name: The failure path was taken
+      ansible.builtin.assert:
+        that:
+          - __sml_failed_cleanly | default(false)
+        fail_msg: "sysmon_linux accepted an empty artefact list without failing"
+        quiet: true

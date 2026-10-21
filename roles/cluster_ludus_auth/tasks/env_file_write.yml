@@ -1,0 +1,18 @@
+---
+- name: "env_file_write | Ensure the ludus config directory exists (0700)"
+  ansible.builtin.file:
+    path: "{{ cluster_ludus_auth_env_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+- name: "env_file_write | Write the proven key as a sourceable export line (0600)"
+  ansible.builtin.copy:
+    content: |
+      export LUDUS_API_KEY={{ __cla_api_key }}
+    dest: "{{ cluster_ludus_auth_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+    backup: false
+  no_log: true

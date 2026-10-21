@@ -1,0 +1,35 @@
+---
+- name: "collection_create | Create collection {{ cluster_pb_store_collection_name }}"
+  ansible.builtin.uri:
+    url: "{{ cluster_pb_store_base_url }}/api/collections"
+    method: POST
+    headers:
+      Authorization: "{{ __pb_super_token }}"
+    body_format: json
+    body: >-
+      {{ {
+           'name': cluster_pb_store_collection_name,
+           'type': 'base',
+           'fields': [
+             {'name': 'name',  'type': 'text', 'required': true},
+             {'name': 'value', 'type': 'text', 'required': true},
+             {'name': 'note',  'type': 'text', 'required': false},
+             {'name': 'owner', 'type': 'relation', 'required': false,
+              'collectionId': __pb_users_collection_id,
+              'maxSelect': 1, 'cascadeDelete': false}
+           ],
+           'indexes': [
+             'CREATE UNIQUE INDEX `idx_' ~ cluster_pb_store_collection_name
+             ~ '_name` ON `' ~ cluster_pb_store_collection_name ~ '` (`name`)'
+           ]
+         } | combine(cluster_pb_store_collection_rules) }}
+    validate_certs: "{{ cluster_pb_store_validate_certs }}"
+    status_code: [200]
+  register: __pb_col_create
+  no_log: true
+  changed_when: true
+- name: "collection_create | Report"
+  ansible.builtin.debug:
+    msg: >-
+      Created PB collection '{{ cluster_pb_store_collection_name }}'
+      (HTTP {{ __pb_col_create.status }}).

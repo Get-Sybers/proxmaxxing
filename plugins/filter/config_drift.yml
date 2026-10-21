@@ -1,0 +1,38 @@
+---
+DOCUMENTATION:
+  name: config_drift
+  short_description: List every discovered value the configuration lacks or contradicts
+  version_added: "0.2.0"
+  description:
+    - Walks a mapping of I(discovered) (As-Is) values against the configuration mapping and returns
+      one entry per leaf that is missing from the configuration or differs from it.
+    - Lists named in O(list_keys) are compared element-wise on their identity key; other lists are
+      compared whole. Keys only the configuration has (hand annotations) are never reported, and a
+      discovered C(null) is "not observed" and never reported either.
+  positional: discovered
+  options:
+    _input:
+      description: The configuration mapping as it is now.
+      type: dict
+      required: true
+    discovered:
+      description: The mapping of discovered values to compare.
+      type: dict
+      required: true
+    list_keys:
+      description: Map of list name to the identity key its elements are matched on.
+      type: dict
+      default: {}
+  author:
+    - Get-Sybers (@Get-Sybers)
+
+EXAMPLES: |
+  - name: Fail the run when the configuration disagrees with the live node
+    ansible.builtin.assert:
+      that: node | get_sybers.cluster.config_drift(__discovered, list_keys={'disks': 'dev'}) | length == 0
+
+RETURN:
+  _value:
+    description: A list of C({path, config, live}) entries; C(config) is C(null) when the key is absent.
+    type: list
+    elements: dict

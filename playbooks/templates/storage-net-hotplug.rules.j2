@@ -1,0 +1,5 @@
+# {{ ansible_managed }}
+# Bring a hot-pluggable storage link up as soon as its netdev appears.
+{% for l in __links | selectattr('module', 'defined') | selectattr('hotplug') %}
+ACTION=="add|move", SUBSYSTEM=="net", KERNEL=="{{ l.iface }}", RUN+="/usr/bin/systemd-run --no-block /usr/sbin/ifup {{ l.iface }}"
+{% endfor %}

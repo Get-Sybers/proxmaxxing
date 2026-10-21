@@ -1,0 +1,17 @@
+---
+changed:
+  - >-
+    Cluster playbook configuration is no longer hardcoded inline. Facts that were
+    embedded in ``vars:`` blocks — and in several cases duplicated across plays —
+    now live in config YAML: cluster-wide values consumed by the node-targeting
+    plays (``sdn_zone``, ``cluster_peers`` derived from each node's
+    ``node.mgmt_ip``, the Ceph pool/replication and canonical ``ceph_osd_tuning``,
+    and the Ceph mesh topology/``expected_egress``) in a new
+    ``inventory/group_vars/proxmox_cluster.yml``; per-host storage links in each
+    ``inventory/host_vars/<host>.yml``; and the values consumed by the
+    ``localhost`` credential/vault and audit plays (which inventory group_vars
+    cannot reach) in ``playbooks/vars/ludus-common.yml`` and
+    ``playbooks/vars/audit-artefacts.yml``, pulled in with ``vars_files``.
+    ``cluster-ceph-diagnose`` now derives its drift-check expectations from the
+    same ``ceph_osd_tuning`` source ``cluster-ceph-tuning`` applies, so the two
+    cannot diverge. No runtime behaviour changes — values are preserved exactly.

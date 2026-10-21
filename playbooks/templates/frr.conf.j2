@@ -1,0 +1,31 @@
+! {{ ansible_managed }}
+! Written by playbooks/cluster-ceph-mesh.yml; vtysh `write memory` would
+! overwrite this — re-run the playbook instead.
+frr defaults datacenter
+hostname {{ inventory_hostname }}
+log syslog informational
+!
+interface dummy0
+ ip router openfabric 1
+ openfabric passive
+!
+{% for i in __m.ifaces %}
+interface {{ i.name }}
+ ip router openfabric 1
+ openfabric metric {{ i.metric }}
+ openfabric hello-interval 1
+ openfabric hello-multiplier 3
+!
+{% endfor %}
+router openfabric 1
+ net {{ __m.net_id }}
+ lsp-gen-interval 5
+!
+{# Peers sorted so the route lines keep one order run to run — unsorted they
+   would swap, the template task would see a change, and frr would restart on
+   every run. #}
+{% for peer in mesh.keys() | difference([inventory_hostname]) | sort %}
+! LAN fallback to {{ peer }} — installs only if the fabric path dies
+ip route {{ mesh[peer].loopback }}/32 {{ mesh[peer].lan_ip }} 250
+{% endfor %}
+!

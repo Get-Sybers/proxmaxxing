@@ -1,0 +1,305 @@
+---
+# Data file: inherently long values (URLs / base64 / exact-match payloads).
+# yamllint disable rule:line-length
+cluster_patch_ludus_list:
+  - id: ERR-13/deploy-vm
+    err: ERR-13
+    file: ansible/range-management/tasks/proxmox/deploy-vm.yml
+    why: 'empty-stdout guard on the Wait-for-IP until: clause. from_json("") RAISES, and Ansible treats
+      an exception in until: as task FAILURE, so retries never engage and the task dies on the FIRST poll.'
+    marker: !unsafe '(nodecheck.stdout | default('''') | trim | length) > 0'
+    stock: !unsafe |2-
+        until: >
+          nodecheck.stdout | default('') | from_json | json_query('ansible_host') | default('') |
+    patched: !unsafe |2-
+        until: >
+          (nodecheck.stdout | default('') | trim | length) > 0
+          and
+          nodecheck.stdout | default('') | from_json | json_query('ansible_host') | default('') |
+  - id: ERR-13/ludus
+    err: ERR-13
+    file: ansible/range-management/ludus.yml
+    why: the same empty-stdout guard on "Wait for VMs to acquire an IP address".
+    marker: !unsafe '(nodecheck.stdout | default('''') | trim | length) > 0'
+    stock: !unsafe |2-
+            until: >
+              nodecheck.stdout | default('') | from_json | json_query('ansible_host') | default('') |
+    patched: !unsafe |2-
+            until: >
+              (nodecheck.stdout | default('') | trim | length) > 0
+              and
+              nodecheck.stdout | default('') | from_json | json_query('ansible_host') | default('') |
+  - id: ERR-21/sysprep-block
+    err: ERR-21
+    file: ansible/range-management/tasks/windows/sysprep.yml
+    why: sysprep stop-wait 180 -> 600 (block). Stock 180 is too short for ~19 concurrent generalizes on
+      a 2-OSD Ceph pool.
+    marker: !unsafe 'timeout: 600'
+    stock: !unsafe |2-
+              timeout: 180
+            delegate_to: localhost
+        rescue:
+    patched: !unsafe |2-
+              timeout: 600
+            delegate_to: localhost
+        rescue:
+  - id: ERR-21/sysprep-rescue
+    err: ERR-21
+    file: ansible/range-management/tasks/windows/sysprep.yml
+    why: the same 180 -> 600 on the rescue path.
+    marker: !unsafe 'timeout: 600   # LOCAL PATCH (ERR-21): was 180'
+    stock: !unsafe |2-
+              timeout: 180
+            delegate_to: localhost
+      - name: Wait for WinRM credentials
+    patched: !unsafe |2-
+              timeout: 600
+            delegate_to: localhost
+      - name: Wait for WinRM credentials
+  - id: ERR-21/reboot-timeout
+    err: ERR-21
+    file: ansible/range-management/tasks/windows/sysprep.yml
+    why: 'restore reboot_timeout: 600 on the post-rename win_reboot.'
+    marker: !unsafe 'reboot_timeout: 600'
+    stock: !unsafe |2-
+        ansible.windows.win_reboot:
+        register: sysprep_hostname_reboot
+    patched: !unsafe |2-
+        ansible.windows.win_reboot:
+          reboot_timeout: 600
+        register: sysprep_hostname_reboot
+  - id: ERR-22/serial
+    err: ERR-22
+    file: ansible/range-management/ludus.yml
+    why: 'serial: 5 on the Sysprep Windows VMs play. Stock has none, so ~19 Windows VMs generalize at once
+      and overwhelm the cleanup providers; with 0 passing, the sysprepd ratchet never engages.'
+    marker: !unsafe '# LOCAL PATCH (ERR-22'
+    stock: !unsafe |-
+      - name: Sysprep Windows VMs
+        tags: [sysprep]
+        hosts: "{{ hostvars['localhost']['sysprep_vms'] | default([]) }}"
+        tasks:
+    patched: !unsafe |-
+      - name: Sysprep Windows VMs
+        tags: [sysprep]
+        hosts: "{{ hostvars['localhost']['sysprep_vms'] | default([]) }}"
+        serial: 5
+        tasks:
+  - id: ERR-22/ualsvc-block
+    err: ERR-22
+    file: ansible/range-management/tasks/windows/sysprep.yml
+    why: warm UalSvc before Run Sysprep. SumSysprepCleanup (ualsvc.dll) times out with 0x41d and sysprep
+      exits 0 WITHOUT rebooting.
+    marker: !unsafe 'Warm UalSvc before Sysprep'
+    stock: !unsafe |2-
+          - name: Run Sysprep
+            ansible.windows.win_shell: C:\Windows\System32\Sysprep\sysprep.exe
+    patched: !unsafe |2-
+          - name: Warm UalSvc before Sysprep (ERR-22)
+            ansible.windows.win_shell: Restart-Service ualsvc -Force -ErrorAction SilentlyContinue
+            failed_when: false
+            changed_when: false
+          - name: Run Sysprep
+            ansible.windows.win_shell: C:\Windows\System32\Sysprep\sysprep.exe
+  - id: ERR-22/ualsvc-rescue
+    err: ERR-22
+    file: ansible/range-management/tasks/windows/sysprep.yml
+    why: the same UalSvc warm-up before Retry Sysprep.
+    marker: !unsafe 'Warm UalSvc before the Sysprep retry'
+    stock: !unsafe |2-
+          - name: Retry Sysprep after removing the blocking AppX packages
+            ansible.windows.win_shell: C:\Windows\System32\Sysprep\sysprep.exe
+    patched: !unsafe |2-
+          - name: Warm UalSvc before the Sysprep retry (ERR-22)
+            ansible.windows.win_shell: Restart-Service ualsvc -Force -ErrorAction SilentlyContinue
+            failed_when: false
+            changed_when: false
+          - name: Retry Sysprep after removing the blocking AppX packages
+            ansible.windows.win_shell: C:\Windows\System32\Sysprep\sysprep.exe
+  - id: ACL-STORAGE/add-user
+    err: ACL-STORAGE
+    file: ansible/user-management/add-user.yml
+    why: grant PVEDatastoreAdmin on the configured VM pool as well as local. Upstream hardcodes
+      /storage/local, so every range deploy 403s at the first clone once the VM pool is shared storage.
+    marker: !unsafe 'Set datastore acls for the user'
+    stock: !unsafe |2-
+          - name: Set acls for local "/storage/local"
+            ansible.builtin.command:
+              argv:
+                - pveum
+                - aclmod
+                - /storage/local
+                - "-user"
+                - "{{ username }}@pam"
+                - "-role"
+                - PVEDatastoreAdmin
+    patched: !unsafe |2-
+          - name: Set datastore acls for the user
+            ansible.builtin.command:
+              argv:
+                - pveum
+                - aclmod
+                - "/storage/{{ item }}"
+                - "-user"
+                - "{{ username }}@pam"
+                - "-role"
+                - PVEDatastoreAdmin
+            loop: >-
+              {{ [ proxmox_vm_storage_pool | default('local'),
+                   proxmox_iso_storage_pool | default('local') ] | unique }}
+  - id: GRUB-ZFS/stage-1
+    err: GRUB-ZFS
+    file: ansible/proxmox-install/stage-1.yml
+    why: trust update-grub's exit code instead of substring-matching its stderr. The substring test
+      false-positives on ZFS-root hosts and aborts the Proxmox install.
+    marker: !unsafe 'failed_when: _pve_grub_update.rc != 0'
+    stock: !unsafe |2-
+            failed_when: ('error' in _pve_grub_update.stderr)
+    patched: !unsafe |2-
+            failed_when: _pve_grub_update.rc != 0
+  - id: SDN-SOURCE/interfaces
+    err: SDN-SOURCE
+    file: ansible/proxmox-install/templates/interfaces.j2
+    why: restore Proxmox's "source /etc/network/interfaces.d/*" include, which upstream's whole-file
+      template silently strips, leaving every SDN VNet unreadable and ifup ludusnat failing.
+    marker: !unsafe 'source /etc/network/interfaces.d/*'
+    stock: !unsafe |2-
+          post-down iptables -t nat -D POSTROUTING -s '192.0.2.254/24' -o {{ pve_interface }} -j MASQUERADE
+    patched: !unsafe |2-
+          post-down iptables -t nat -D POSTROUTING -s '192.0.2.254/24' -o {{ pve_interface }} -j MASQUERADE
+      source /etc/network/interfaces.d/*
+  - id: ADGUARD/install
+    err: ADGUARD
+    file: ansible/range-management/tasks/router/configure-router.yml
+    why: harden the AdGuard Home install against transient network failure - pipefail, curl retries,
+      connect timeout, and task-level retries.
+    marker: !unsafe '--retry-all-errors'
+    stock: !unsafe |-
+      - name: Install AdGuardHome
+        ansible.builtin.shell: |
+          curl -s -S -L https://raw.githubusercontent.com/AdguardTeam/AdGuardHome/master/scripts/install.sh | sh -s -- -v
+        register: adguard_install
+        failed_when: adguard_install.rc != 0 and 'the existing AdGuard Home installation is detected' not in adguard_install.stderr
+    patched: !unsafe |-
+      - name: Install AdGuardHome
+        ansible.builtin.shell: |
+          set -o pipefail
+          curl -sSfL --retry 5 --retry-delay 10 --retry-all-errors --connect-timeout 30 https://raw.githubusercontent.com/AdguardTeam/AdGuardHome/master/scripts/install.sh | sh -s -- -v
+        args:
+          executable: /bin/bash
+        register: adguard_install
+        failed_when: adguard_install.rc != 0 and 'the existing AdGuard Home installation is detected' not in adguard_install.stderr
+        retries: 3
+        delay: 15
+        until: adguard_install.rc == 0 or 'the existing AdGuard Home installation is detected' in adguard_install.stderr
+  - id: ADGUARD/reconfigure
+    err: ADGUARD
+    file: ansible/range-management/tasks/router/configure-router.yml
+    why: configure and restart AdGuard Home when it was already installed, not only when a fresh install
+      returned rc 0. Both guards are patched as one span because their stock text is identical.
+    marker: !unsafe '# LOCAL PATCH (ADGUARD): an already-installed AdGuard'
+    stock: !unsafe |-
+      - name: Configure AdGuardHome
+        ansible.builtin.template:
+          src: AdGuardHome.yaml.j2
+          dest: /opt/AdGuardHome/AdGuardHome.yaml
+        when: adguard_install.rc == 0
+      - name: Restart AdGuardHome to take config
+        ansible.builtin.service:
+          name: AdGuardHome
+          state: restarted
+        when: adguard_install.rc == 0
+    patched: !unsafe |-
+      - name: Configure AdGuardHome
+        ansible.builtin.template:
+          src: AdGuardHome.yaml.j2
+          dest: /opt/AdGuardHome/AdGuardHome.yaml
+        when: adguard_install.rc == 0 or 'the existing AdGuard Home installation is detected' in adguard_install.stderr
+      - name: Restart AdGuardHome to take config
+        ansible.builtin.service:
+          name: AdGuardHome
+          state: restarted
+        when: adguard_install.rc == 0 or 'the existing AdGuard Home installation is detected' in adguard_install.stderr
+  - id: SDN-PRECHECK/pre-run-checks
+    err: SDN-PRECHECK
+    file: ansible/range-management/pre-run-checks.yml
+    why: fail fast when cluster mode is on but a required SDN VNet is missing, instead of surfacing it
+      much later as an opaque netdev_add status 512 from a NIC hotplug.
+    marker: !unsafe 'Cluster mode - the NAT VNet must exist'
+    stock: !unsafe |2-
+                - range_id in groups or 'ADMIN' in groups
+              fail_msg: "Dynamic inventory failed to load correctly. This may be an issue if the ludus-token was modified in Proxmox."
+              success_msg: "Dynamic inventory loaded!"
+    patched: !unsafe |2-
+                - range_id in groups or 'ADMIN' in groups
+              fail_msg: "Dynamic inventory failed to load correctly. This may be an issue if the ludus-token was modified in Proxmox."
+              success_msg: "Dynamic inventory loaded!"
+          - name: Cluster mode - query SDN VNets via the Proxmox API
+            ansible.builtin.uri:
+              url: "https://{{ api_host | default('127.0.0.1') }}:8006/api2/json/cluster/sdn/vnets"
+              method: GET
+              headers:
+                Authorization: "PVEAPIToken={{ proxmox_full_token_id }}={{ proxmox_token_secret }}"
+              validate_certs: false
+            register: _sdn_state
+            failed_when: false
+            when: ludus_cluster_mode | default(false) | bool
+          - name: Cluster mode - parse visible VNets
+            ansible.builtin.set_fact:
+              _sdn_queryable: "{{ (_sdn_state.status | default(0)) == 200 and (_sdn_state.json.data | default([])) | length > 0 }}"
+              _sdn_vnets: "{{ (_sdn_state.json.data | default([])) | map(attribute='vnet') | list }}"
+            when: ludus_cluster_mode | default(false) | bool
+          - name: Cluster mode - warn (do not block) if VNets could not be queried
+            ansible.builtin.debug:
+              msg: >-
+                cluster_mode is on but no SDN VNets were visible via the API
+                (status {{ _sdn_state.status | default('n/a') }}). Skipping the VNet precondition
+                checks — verify manually as root: pvesh get /cluster/sdn/vnets
+            when:
+              - ludus_cluster_mode | default(false) | bool
+              - not (_sdn_queryable | default(false) | bool)
+          - name: Cluster mode - the NAT VNet must exist
+            ansible.builtin.assert:
+              that:
+                - "'ludusnat' in _sdn_vnets"
+              fail_msg: >-
+                cluster_mode is enabled but the 'ludusnat' VNet does not exist in zone
+                '{{ sdn_zone | default('ludus') }}'. Range routers bridge their WAN side to it.
+                Create it with:
+                  pvesh create /cluster/sdn/vnets --zone {{ sdn_zone | default('ludus') }}
+                    --vnet ludusnat --tag 16777215 --vlanaware 1
+                  pvesh set /cluster/sdn
+              success_msg: "NAT VNet 'ludusnat' exists"
+            when:
+              - ludus_cluster_mode | default(false) | bool
+              - _sdn_queryable | default(false) | bool
+          - name: Cluster mode - this range's VNet must exist
+            ansible.builtin.assert:
+              that:
+                - range_bridge_name in _sdn_vnets
+              fail_msg: >-
+                cluster_mode is enabled but this range's VNet '{{ range_bridge_name }}' does not
+                exist in zone '{{ sdn_zone | default('ludus') }}'. Deploying now would fail later
+                with an opaque 'pve-bridge-hotplug failed with status 512' and leave the router
+                with a NIC that has no tap. Create it with:
+                  pvesh create /cluster/sdn/vnets --zone {{ sdn_zone | default('ludus') }}
+                    --vnet {{ range_bridge_name }}
+                    --tag {{ (vxlan_tag_base | default(0) | int) + (range_second_octet | int) }} --vlanaware 1
+                  pveum aclmod /sdn/zones/{{ sdn_zone | default('ludus') }}/{{ range_bridge_name }}
+                    -group ludus_users -role PVESDNUser
+                  pvesh set /cluster/sdn
+              success_msg: "Range VNet '{{ range_bridge_name }}' exists"
+            when:
+              - ludus_cluster_mode | default(false) | bool
+              - _sdn_queryable | default(false) | bool
+cluster_patch_ludus_reorder:
+  id: ERR-103/sysprep-ordering
+  err: ERR-103
+  file: ansible/range-management/ludus.yml
+  why: >-
+    Stock runs "Sysprep Windows VMs" AFTER "Configure IP and Hostname",
+    inverting the generalise-before-identity dependency. The section is moved
+    ahead of the anchor.
+  section_start: !unsafe "- name: Collect Windows VMs to sysprep\n"
+  section_end: !unsafe "- name: Collect DC VM names"
+  anchor: !unsafe "- name: Configure IP and Hostname for all VMs\n"

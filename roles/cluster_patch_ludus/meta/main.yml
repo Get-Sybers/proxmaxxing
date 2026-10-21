@@ -1,0 +1,19 @@
+---
+galaxy_info:
+  role_name: cluster_patch_ludus
+  namespace: get_sybers
+  author: Get-Sybers
+  description: >-
+    Re-apply local patches to STOCK Ludus range-management files after a
+    ludus-server --update, which reverts every one of them. Exact-string
+    substitutions declared in vars/main.yml, each idempotent via a marker, each
+    verified by re-reading the file from disk. Operates on the cluster host
+    where Ludus is installed (/opt/ludus).
+  company: Get-Sybers
+  license: AGPL-3.0-only
+  min_ansible_version: "2.19.0"
+  platforms:
+    - name: Debian
+      versions: [bookworm, trixie]
+  galaxy_tags: [ludus, patch, reconcile, upgrade, cluster]
+dependencies: []

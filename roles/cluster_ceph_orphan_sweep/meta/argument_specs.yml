@@ -1,0 +1,33 @@
+---
+argument_specs:
+  main:
+    short_description: Reap orphaned Ceph RBD disks (ERR-20 /
+    description:
+      - Removes vm-<id> RBD images on the pool that NO live guest config references.
+      - Irreversible; previews by default. Runs on a Proxmox cluster node.
+    options:
+      cluster_ceph_orphan_sweep_pool:
+        type: str
+        required: false
+        default: "{{ ceph_pool }}"
+        description: The Ceph RBD pool to sweep (the inventory's ceph_pool unless overridden). Used only in `command:` (never
+          `shell:`), so there is no injection path; a pool name is a Ceph object name
+          (letters, digits, dot, underscore, dash). The role additionally asserts the
+          pool is backed by exactly one PVE storage named for it before acting.
+      cluster_ceph_orphan_sweep_preview_only:
+        type: bool
+        required: false
+        default: true
+        description: When true (default) the role reports what it would remove and
+          touches nothing. Set false to actually rbd rm.
+      cluster_ceph_orphan_sweep_delegate_to:
+        type: str
+        required: false
+        default: localhost
+        description: The host every host-touching task (and the included
+          cluster_preflight's checks) delegates to. The default, localhost, is the
+          ansible controller — the master node in both sanctioned contexts (a
+          `ludus range deploy`, whose controller is the Ludus server, and the
+          wrapper playbook run on the master). This is what lets the role ride the user-defined-roles
+          stage of a range deploy while the play nominally targets a range VM; the
+          preflight gates validate this host, so an unsanctioned value fail-closes.

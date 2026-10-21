@@ -1,0 +1,675 @@
+---
+- name: "Mesh: loopbacks + FRR OpenFabric over the fast links (non-disruptive)"
+  hosts: proxmox_cluster
+  gather_facts: false
+  tasks:
+    - name: "Select this host's mesh definition"
+      ansible.builtin.set_fact:
+        __m: "{{ mesh[inventory_hostname] }}"
+    - name: "Preflight: frr is installed"
+      ansible.builtin.command: dpkg -s frr
+      changed_when: false
+    - name: "Preflight: every mesh interface exists"
+      ansible.builtin.command: "ip link show {{ item.name }}"
+      loop: "{{ __m.ifaces }}"
+      loop_control: { label: "{{ item.name }} ({{ item.role }})" }
+      changed_when: false
+    - name: "Preflight: interfaces.d is sourced"
+      ansible.builtin.command: grep -q '^source /etc/network/interfaces.d/' /etc/network/interfaces
+      changed_when: false
+    - name: "Preflight: PVE SDN has no controllers (else PVE owns frr.conf)"
+      ansible.builtin.shell: "! test -s /etc/pve/sdn/controllers.cfg"
+      changed_when: false
+    - name: "Preflight: rp_filter is not strict (would drop asymmetric mesh replies)"
+      ansible.builtin.shell: "test \"$(sysctl -n net.ipv4.conf.all.rp_filter)\" != 1"
+      changed_when: false
+    - name: "Fact-find: capture the bytes of every file this play writes"
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        checksum_algorithm: sha256
+      loop: "{{ mesh_managed_files }}"
+      register: __mesh_stat
+      check_mode: false
+    - name: "Fact-find: slurp the ones that exist"
+      ansible.builtin.slurp:
+        src: "{{ item.item }}"
+      loop: "{{ __mesh_stat.results }}"
+      loop_control: { label: "{{ item.item }}" }
+      when: item.stat.exists
+      register: __mesh_slurp
+      check_mode: false
+    - name: "Fact-find: what does dummy0 look like RIGHT NOW?"
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          a=$(ip -o -4 addr show dev dummy0 2>/dev/null | awk '{print $4}' | head -1)
+          m=$(cat /sys/class/net/dummy0/mtu 2>/dev/null)
+          printf '%s|%s' "${a:-none}" "${m:-none}"
+        executable: /bin/bash
+      register: __dummy_prior
+      changed_when: false
+      check_mode: false
+      failed_when: false
+    - name: "Fact-find: frr's current enabled/active state and the live ip_forward value"
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          printf '%s|%s|%s' \
+            "$(systemctl is-enabled frr 2>/dev/null || echo unknown)" \
+            "$(systemctl is-active  frr 2>/dev/null || echo unknown)" \
+            "$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo unknown)"
+        executable: /bin/bash
+      register: __frr_prior
+      changed_when: false
+      check_mode: false
+      failed_when: false
+    - name: "Fact-find: which interface carries this node's Ansible control path?"
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          addr="{{ ansible_host | default(inventory_hostname) }}"
+          dev=$(ip -o -4 addr show | awk -v a="^$addr/" '$4 ~ a {print $2; exit}')
+          [ -n "$dev" ] || dev=$(ip route get "$addr" 2>/dev/null | grep -oP 'dev \K\S+' | head -1)
+          echo "$dev"
+          ls /sys/class/net/"$dev"/brif/ 2>/dev/null | tr '\n' ' '
+        executable: /bin/bash
+      register: __mesh_ctrl_path
+      changed_when: false
+      check_mode: false
+      failed_when: false
+    - name: "Fact-find: index the captured file state per file"
+      ansible.builtin.set_fact:
+        __prior_mesh_files: >-
+          {{ __prior_mesh_files | default({}) | combine({ item.0.item: {
+               'existed': item.0.stat.exists,
+               'mode': item.0.stat.mode | default('0644'),
+               'owner': item.0.stat.pw_name | default('root'),
+               'group': item.0.stat.gr_name | default('root'),
+               'sha256': item.0.stat.checksum | default(''),
+               'b64': item.1.content | default(''),
+               'captured': item.1.content is defined } }) }}
+      loop: "{{ __mesh_stat.results | zip(__mesh_slurp.results) | list }}"
+      loop_control: { label: "{{ item.0.item }}" }
+    - name: "Fact-find: report the prior state a rescue would put back"
+      ansible.builtin.debug:
+        msg: |-
+          {{ inventory_hostname }} — state captured BEFORE any change:
+          files (restored byte-for-byte):
+          {% for n, f in __prior_mesh_files.items() %}
+            {{ n }}: {{ ('present, ' ~ f.mode ~ ', sha256 ' ~ f.sha256[:12] ~ '…') if f.existed else 'ABSENT (rescue would delete it again)' }}
+          {% endfor %}
+          dummy0: {{ __dummy_prior.stdout }} (addr|mtu) -> target {{ __m.loopback }}/32 mtu 9000
+            ({{ 'ALREADY at target — the rescue will NOT tear it down' if __dummy_prior.stdout.split('|')[0] == __m.loopback ~ '/32'
+                else 'this run will configure it; the rescue can put it back' }})
+          frr: {{ __frr_prior.stdout.split('|')[0] }}/{{ __frr_prior.stdout.split('|')[1] }},
+               net.ipv4.ip_forward={{ __frr_prior.stdout.split('|')[2] }}
+          Ansible control path egresses: {{ __mesh_ctrl_path.stdout_lines[0] | default('?') }}
+            (bridge ports: {{ __mesh_ctrl_path.stdout_lines[1] | default('none') }})
+    - name: "Preflight: the mesh interfaces are NOT the Ansible control path"
+      ansible.builtin.assert:
+        that:
+          - (__mesh_ctrl_path.stdout_lines[0] | default('') | trim) | length > 0
+          - (__mesh_ctrl_path.stdout_lines[0] | default('')) not in (__m.ifaces | map(attribute='name') | list + ['dummy0'])
+          - (__m.ifaces | map(attribute='name') | list + ['dummy0'])
+            | intersect((__mesh_ctrl_path.stdout_lines[1] | default('')).split())
+            | length == 0
+        success_msg: >-
+          Control path egresses {{ __mesh_ctrl_path.stdout_lines[0] | default('?') }}, which is not
+          a mesh interface and does not bridge one — a rescue on this node is deliverable.
+        fail_msg: >-
+          REFUSING TO RUN on {{ inventory_hostname }}:
+          {% if (__mesh_ctrl_path.stdout_lines[0] | default('') | trim) | length == 0 %}
+          the Ansible control path could NOT BE DETERMINED, so it cannot be shown to be
+          off the mesh. Treating "unknown" as safe is how a host is lost.
+          {% else %}
+          Ansible reaches this node over {{ __mesh_ctrl_path.stdout_lines[0] }} (bridge ports:
+          {{ __mesh_ctrl_path.stdout_lines[1] | default('none') }}), which is or bridges a mesh
+          interface ({{ __m.ifaces | map(attribute='name') | list + ['dummy0'] }}).
+          {% endif %}
+          A failed frr restart would make this host UNREACHABLE and no rescue could be delivered.
+    - name: "Preflight: every prior value needed for a rollback was captured"
+      ansible.builtin.assert:
+        that:
+          - __prior_mesh_files | length == mesh_managed_files | length
+          - __prior_mesh_files.values() | selectattr('existed') | rejectattr('captured') | list | length == 0
+          - __frr_prior.stdout.split('|') | length == 3
+        success_msg: >-
+          Prior state captured: {{ __prior_mesh_files | length }} files, dummy0 = {{ __dummy_prior.stdout }},
+          frr = {{ __frr_prior.stdout }}.
+        fail_msg: >-
+          Refusing to reconfigure the storage mesh: part of the prior state could not be read,
+          so it could not be put back on failure.
+    - name: "Build the mesh, prove it converged on the fast paths, and restore the prior state if not"
+      block:
+        - name: "Enable IPv4 forwarding (persistent)"
+          ansible.posix.sysctl:
+            name: net.ipv4.ip_forward
+            value: "1"
+            sysctl_file: /etc/sysctl.d/90-storage-mesh.conf
+            reload: true
+        - name: "Persist dummy0 loopback stanza (ifupdown2 link-type dummy)"
+          ansible.builtin.template:
+            src: templates/storage-mesh.interfaces.j2
+            dest: /etc/network/interfaces.d/storage-mesh
+            owner: root
+            group: root
+            mode: "0644"
+          register: __dummycfg
+        - name: "Bring up dummy0"
+          ansible.builtin.shell:
+            cmd: |
+              set -o pipefail
+              cur=$(ip -o -4 addr show dev dummy0 2>/dev/null | awk '{print $4}')
+              if [ "$cur" = "{{ __m.loopback }}/32" ]; then
+                echo "already up"
+              else
+                ifup dummy0 2>&1 || { ip link add dummy0 type dummy 2>/dev/null; ip addr add {{ __m.loopback }}/32 dev dummy0; ip link set dummy0 up; }
+                echo "brought up"
+              fi
+              if [ "$(cat /sys/class/net/dummy0/mtu 2>/dev/null)" != "9000" ]; then
+                ip link set dev dummy0 mtu 9000 && echo "mtu set 9000"
+              fi
+            executable: /bin/bash
+          register: __dummyup
+          changed_when: "'brought up' in __dummyup.stdout or 'mtu set 9000' in __dummyup.stdout"
+        - name: "Enable fabricd in /etc/frr/daemons"
+          ansible.builtin.lineinfile:
+            path: /etc/frr/daemons
+            regexp: '^fabricd='
+            line: "fabricd=yes"
+          register: __daemons
+        - name: "Write /etc/frr/frr.conf (OpenFabric mesh)"
+          ansible.builtin.template:
+            src: templates/frr.conf.j2
+            dest: /etc/frr/frr.conf
+            owner: frr
+            group: frr
+            mode: "0640"
+          register: __frrconf
+        - name: "Enable + start frr"
+          ansible.builtin.systemd:
+            name: frr
+            enabled: true
+            state: started
+        - name: "Restart frr to pick up config changes"
+          ansible.builtin.systemd:
+            name: frr
+            state: restarted
+          when: __daemons.changed or __frrconf.changed
+          throttle: 1
+        - name: "Wait for fabric convergence (route to each peer egresses its fast interface)"
+          ansible.builtin.shell: "set -o pipefail; ip route get {{ item.key }} | grep -oP 'dev \\K\\S+'"
+          args: { executable: /bin/bash }
+          loop: "{{ expected_egress[inventory_hostname] | dict2items }}"
+          loop_control: { label: "{{ item.key }} -> {{ item.value }}" }
+          register: __converge
+          until: __converge.stdout == item.value
+          retries: 30
+          delay: 2
+          changed_when: false
+        - name: "Post-check: loopback-sourced reachability (what Ceph will actually use)"
+          ansible.builtin.command: "ping -c2 -W2 -I {{ __m.loopback }} {{ mesh[item].loopback }}"
+          loop: "{{ mesh.keys() | difference([inventory_hostname]) }}"
+          loop_control: { label: "{{ __m.loopback }} -> {{ mesh[item].loopback }}" }
+          changed_when: false
+        - name: "Post-check: read the chosen egress interface for each peer loopback"
+          ansible.builtin.shell: "set -o pipefail; ip route get {{ item.key }} | grep -oP 'dev \\K\\S+'"
+          args: { executable: /bin/bash }
+          loop: "{{ expected_egress[inventory_hostname] | dict2items }}"
+          loop_control: { label: "{{ item.key }} expect {{ item.value }}" }
+          register: __egress
+          changed_when: false
+        - name: "POST-CHECK: fast path preferred (negative test — LAN must NOT carry mesh traffic)"
+          ansible.builtin.assert:
+            that: item.stdout == item.item.value
+            fail_msg: >-
+              Route to {{ item.item.key }} egresses {{ item.stdout }},
+              expected {{ item.item.value }} — OpenFabric metrics are not being
+              honored; do NOT proceed to the Ceph cutover.
+            quiet: true
+          loop: "{{ __egress.results }}"
+          loop_control: { label: "{{ item.item.key }} via {{ item.stdout }}" }
+        - name: "POST-CHECK: LAN static fallback is present in the FRR RIB (backup, not selected)"
+          ansible.builtin.shell: |
+            set -o pipefail
+            out=$(vtysh -c "show ip route {{ mesh[item].loopback }}/32")
+            echo "$out" | grep -A2 'Known via "openfabric"' | grep -q "Selected" || { echo "fabric route not selected"; exit 1; }
+            echo "$out" | grep -q 'Known via "static"' || { echo "static fallback missing"; exit 1; }
+          args: { executable: /bin/bash }
+          loop: "{{ mesh.keys() | difference([inventory_hostname]) }}"
+          loop_control: { label: "{{ mesh[item].loopback }} fallback via {{ mesh[item].lan_ip }}" }
+          changed_when: false
+        - name: "Report mesh status"
+          ansible.builtin.debug:
+            msg: "{{ inventory_hostname }} loopback {{ __m.loopback }} — all peer loopbacks reachable, fast paths verified, LAN fallback staged"
+      rescue:
+        - name: "Rescue: restore the bytes of every managed file that EXISTED"
+          ansible.builtin.copy:
+            content: "{{ item.value.b64 | b64decode }}"
+            dest: "{{ item.key }}"
+            owner: "{{ item.value.owner }}"
+            group: "{{ item.value.group }}"
+            mode: "{{ item.value.mode }}"
+          loop: "{{ __prior_mesh_files | dict2items | selectattr('value.existed') | list }}"
+          loop_control: { label: "{{ item.key }} <- {{ item.value.sha256[:12] }}…" }
+          register: __mesh_restore_present
+          failed_when: false
+        - name: "Rescue: delete every managed file that did NOT exist"
+          ansible.builtin.file:
+            path: "{{ item.key }}"
+            state: absent
+          loop: "{{ __prior_mesh_files | dict2items | rejectattr('value.existed') | list }}"
+          loop_control: { label: "{{ item.key }} <- back to ABSENT" }
+          register: __mesh_restore_absent
+          failed_when: false
+        - name: "Rescue: restore the live net.ipv4.ip_forward value"
+          ansible.builtin.command:
+            argv: [sysctl, -w, "net.ipv4.ip_forward={{ __frr_prior.stdout.split('|')[2] }}"]
+          when: __frr_prior.stdout.split('|')[2] in ['0', '1']
+          register: __mesh_restore_fwd
+          changed_when: true
+          failed_when: false
+        - name: "Rescue: restart frr against the restored config, then restore its unit state"
+          ansible.builtin.shell:
+            cmd: |
+              set -o pipefail
+              systemctl restart frr || true
+              case "{{ __frr_prior.stdout.split('|')[0] }}" in
+                enabled)  systemctl enable frr ;;
+                disabled) systemctl disable frr ;;
+                *) echo "prior enabled-state was '{{ __frr_prior.stdout.split('|')[0] }}' — not reassertable" ;;
+              esac
+              case "{{ __frr_prior.stdout.split('|')[1] }}" in
+                active)          systemctl start frr ;;
+                inactive|failed) systemctl stop frr ;;
+                *) echo "prior active-state was '{{ __frr_prior.stdout.split('|')[1] }}' — not reassertable" ;;
+              esac
+            executable: /bin/bash
+          register: __mesh_restore_frr
+          changed_when: true
+          failed_when: false
+        - name: "Rescue: restore dummy0 ONLY if this run changed it"
+          ansible.builtin.shell:
+            cmd: |
+              set -o pipefail
+              {% if __dummy_prior.stdout.split('|')[0] != __m.loopback ~ '/32' %}
+              ip addr del {{ __m.loopback }}/32 dev dummy0 2>/dev/null || true
+              {% endif %}
+              {% if __dummy_prior.stdout.split('|')[0] not in ['none', ''] %}
+              ip addr add {{ __dummy_prior.stdout.split('|')[0] }} dev dummy0 2>/dev/null || true
+              {% endif %}
+              {% if __dummy_prior.stdout.split('|')[1] not in ['none', ''] %}
+              ip link set dev dummy0 mtu {{ __dummy_prior.stdout.split('|')[1] }} 2>/dev/null || true
+              {% else %}
+              ip link del dummy0 2>/dev/null || true
+              {% endif %}
+              echo restored
+            executable: /bin/bash
+          when: >-
+            __dummy_prior.stdout.split('|')[0] != __m.loopback ~ '/32'
+            or __dummy_prior.stdout.split('|')[1] | string != '9000'
+          register: __mesh_restore_dummy
+          changed_when: true
+          failed_when: false
+        - name: "Rescue verify: re-stat every managed file"
+          ansible.builtin.stat:
+            path: "{{ item.key }}"
+            checksum_algorithm: sha256
+          loop: "{{ __prior_mesh_files | dict2items }}"
+          loop_control: { label: "{{ item.key }}" }
+          register: __mesh_restore_stat
+          check_mode: false
+          failed_when: false
+        - name: "Rescue verify: re-read dummy0, frr and ip_forward"
+          ansible.builtin.shell:
+            cmd: |
+              set -o pipefail
+              a=$(ip -o -4 addr show dev dummy0 2>/dev/null | awk '{print $4}' | head -1)
+              m=$(cat /sys/class/net/dummy0/mtu 2>/dev/null)
+              printf '%s|%s;%s|%s|%s' "${a:-none}" "${m:-none}" \
+                "$(systemctl is-enabled frr 2>/dev/null || echo unknown)" \
+                "$(systemctl is-active  frr 2>/dev/null || echo unknown)" \
+                "$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo unknown)"
+            executable: /bin/bash
+          register: __mesh_after
+          changed_when: false
+          failed_when: false
+        - name: "Rescue verify: compare, file by file"
+          ansible.builtin.set_fact:
+            __mesh_verdicts: >-
+              {{ __mesh_verdicts | default([]) + [{
+                   'file': item.item.key,
+                   'was': ('sha256 ' ~ item.item.value.sha256[:12] ~ '…') if item.item.value.existed else 'ABSENT',
+                   'now': ('sha256 ' ~ (item.stat.checksum | default('?'))[:12] ~ '…') if item.stat.exists | default(false) else 'ABSENT',
+                   'ok': (item.stat.exists | default(false)) == item.item.value.existed
+                         and ((item.stat.checksum | default('')) == item.item.value.sha256
+                              if item.item.value.existed else true) }] }}
+          loop: "{{ __mesh_restore_stat.results }}"
+          loop_control: { label: "{{ item.item.key }}" }
+        - name: "Rescue verify: the rollback verdict"
+          ansible.builtin.set_fact:
+            __mesh_dummy_ok: "{{ (__mesh_after.stdout | default('|;|,|')).split(';')[0] == __dummy_prior.stdout }}"
+            __mesh_frr_ok: "{{ (__mesh_after.stdout | default('|;|,|')).split(';')[1] | default('') == __frr_prior.stdout }}"
+        - name: "Rescue verify: did everything come back?"
+          ansible.builtin.set_fact:
+            __mesh_verdict: >-
+              {{ (__mesh_verdicts | rejectattr('ok') | list | length) == 0
+                 and __mesh_dummy_ok | bool and __mesh_frr_ok | bool }}
+        # yamllint disable rule:line-length
+        - name: "Rescue: fail reporting the original error AND the rollback verdict"
+          ansible.builtin.fail:
+            msg: |-
+              STORAGE MESH BUILD FAILED ON {{ inventory_hostname }}{{ ' AND WAS ROLLED BACK' if __mesh_verdict | bool else ' — ROLLBACK INCOMPLETE' }}.
+              (1) ORIGINAL FAILURE — task '{{ ansible_failed_task.name | default('unknown') }}':
+                  {{ ansible_failed_result.msg | default(ansible_failed_result) | default('(no result captured)') }}
+              (2) ROLLBACK: {{ "VERIFIED — every managed file, dummy0 and the frr unit state were re-read and match the capture."
+                               if __mesh_verdict | bool else
+                               "NOT VERIFIED — at least one item does NOT match what was captured, so the storage mesh on
+                                this node is in an UNKNOWN state and needs manual inspection." }}
+              {% for v in __mesh_verdicts %}
+                  {{ 'OK  ' if v.ok else 'FAIL' }} {{ v.file }}: captured={{ v.was }} now={{ v.now }}
+              {% endfor %}
+                  {{ 'OK  ' if __mesh_dummy_ok | bool else 'FAIL' }} dummy0 (addr|mtu): captured={{ __dummy_prior.stdout }} now={{ (__mesh_after.stdout | default('?')).split(';')[0] }}
+                       ({{ 'this run configured it, so the rescue put it back'
+                            if __dummy_prior.stdout.split('|')[0] != __m.loopback ~ '/32'
+                            else 'already at target before this run — deliberately NOT torn down, because Ceph binds to it' }})
+                  {{ 'OK  ' if __mesh_frr_ok | bool else 'FAIL' }} frr + ip_forward: captured={{ __frr_prior.stdout }} now={{ (__mesh_after.stdout | default('?;?')).split(';')[1] | default('?') }}
+              (3) NOT ROLLED BACK, DELIBERATELY (see the play header):
+                  - a dummy0 that already carried the mesh loopback before this run. Ceph binds
+                    its mon and OSD addresses to it; removing an address that was already there,
+                    to undo a no-op, would halt Ceph on this node.
+                  - PEER nodes. block/rescue is per host and the frr restarts are throttled to
+                    one node at a time, so an EARLIER node whose post-check already passed keeps
+                    its new config. That is what `throttle: 1` buys — a bounded blast radius,
+                    not a cluster-wide undo.
+                  - a host Ansible can no longer reach: no rescue is deliverable to it at all.
+        # yamllint enable rule:line-length
+- name: "GATED: move Ceph public_network + cluster_network onto the mesh"
+  hosts: proxmox_master
+  gather_facts: false
+  tasks:
+    - name: "Refuse to run the cutover unless explicitly requested"
+      ansible.builtin.debug:
+        msg: >-
+          SKIPPING the Ceph mesh cutover. DISRUPTIVE: rewrites
+          public_network/cluster_network, restarts OSDs host-by-host
+          (min_size=2 => writes pause), re-creates each mon on its loopback.
+          Run in a maintenance window with no range deploying:
+            -e apply_ceph_mesh_cutover=true
+          and ONLY after Play 1 reports every fast path verified.
+      when: not (apply_ceph_mesh_cutover | bool)
+    - name: "Cutover"
+      when: apply_ceph_mesh_cutover | bool
+      block:
+        - name: "Preflight: Ceph healthy (or only a prior run's noout flag)"
+          ansible.builtin.shell:
+            cmd: |
+              set -o pipefail
+              timeout 30 ceph health detail -f json | python3 -c '
+              import sys, json
+              h = json.load(sys.stdin)
+              ok = h["status"] == "HEALTH_OK" or (
+                  h["status"] == "HEALTH_WARN"
+                  and set(h.get("checks", {})) <= {"OSDMAP_FLAGS"})
+              sys.exit(0 if ok else 1)'
+            executable: /bin/bash
+          changed_when: false
+        - name: "Preflight: every node sees every loopback (full mesh check)"
+          ansible.builtin.command:
+            argv: [ping, -c1, -W2, "{{ item.1.value.loopback }}"]
+          loop: "{{ mesh | dict2items | product(mesh | dict2items) | list }}"
+          delegate_to: "{{ item.0.key }}"
+          loop_control: { label: "from {{ item.0.key }} to {{ item.1.key }} ({{ item.1.value.loopback }})" }
+          changed_when: false
+        - name: "Fact-find: capture the bytes of /etc/pve/ceph.conf before rewriting it"
+          ansible.builtin.slurp:
+            src: /etc/pve/ceph.conf
+          register: __cutover_conf_prior
+          check_mode: false
+        - name: "Fact-find: capture the mon map, the OSD binds and the current flags"
+          ansible.builtin.shell:
+            cmd: |
+              set -o pipefail
+              echo "### mons"; timeout 30 ceph mon dump 2>/dev/null | grep 'mon\.' || true
+              echo "### osds"; timeout 30 ceph osd dump 2>/dev/null | grep -E '^osd\.[0-9]' || true
+              echo "### flags"; timeout 30 ceph osd dump 2>/dev/null | awk '/^flags/{print}' || true
+            executable: /bin/bash
+          register: __cutover_state_prior
+          changed_when: false
+          check_mode: false
+          failed_when: false
+        - name: "Fact-find: report the prior state (this is what a MANUAL repair aims at)"
+          ansible.builtin.debug:
+            msg: |-
+              /etc/pve/ceph.conf: {{ __cutover_conf_prior.content | b64decode | length }} bytes captured
+              Ceph binds as found BEFORE the cutover:
+              {{ __cutover_state_prior.stdout }}
+        - name: "Preflight: the prior state was actually captured"
+          ansible.builtin.assert:
+            that:
+              - __cutover_conf_prior.content | b64decode | length > 0
+              - __cutover_state_prior.stdout is search('mon\.')
+              - __cutover_state_prior.stdout is search('(?m)^osd\.[0-9]')
+            fail_msg: >-
+              Refusing to start the cutover: the prior mon/OSD binds and ceph.conf could not
+              be captured, so a failure could not even be DESCRIBED, let alone repaired.
+              ceph.conf bytes={{ __cutover_conf_prior.content | b64decode | length }},
+              mon lines={{ __cutover_state_prior.stdout | default('') | regex_findall('mon\.') | length }},
+              osd lines={{ __cutover_state_prior.stdout | default('') | regex_findall('(?m)^osd\.[0-9]') | length }}.
+        - name: "Set noout so restarts don't trigger rebalancing"
+          ansible.builtin.command: timeout 30 ceph osd set noout
+          changed_when: true
+        - name: "Point public_network at the mesh"
+          ansible.builtin.lineinfile:
+            path: /etc/pve/ceph.conf
+            regexp: '^\s*public_network = '
+            line: "\tpublic_network = {{ mesh_prefix }}"
+            insertafter: '^\[global\]'
+        - name: "Point cluster_network at the mesh"
+          ansible.builtin.lineinfile:
+            path: /etc/pve/ceph.conf
+            regexp: '^\s*cluster_network = '
+            line: "\tcluster_network = {{ mesh_prefix }}"
+            insertafter: '^\[global\]'
+        - name: "Fact-find: which hosts carry OSDs right now (the hosts to restart)"
+          get_sybers.cluster.ceph_info:
+            queries: [osd_tree]
+          register: __cutover_tree
+        - name: "Restart OSDs host-by-host onto the mesh, waiting for clean PGs"
+          ansible.builtin.shell:
+            cmd: |
+              set -o pipefail
+              state=$(python3 - <<'PY'
+              import json, subprocess, sys
+              def ceph(*a):
+                  r = subprocess.run(["timeout", "30", "ceph", *a, "-f", "json"],
+                                     capture_output=True, text=True)
+                  if r.returncode != 0:
+                      sys.stderr.write(r.stderr)
+                      sys.exit(2)
+                  return json.loads(r.stdout)
+              tree, dump = ceph("osd", "tree"), ceph("osd", "dump")
+              ids = [c for n in tree["nodes"]
+                     if n["type"] == "host" and n["name"] == "{{ item }}"
+                     for c in n.get("children", [])]
+              osds = {o["osd"]: o for o in dump["osds"]}
+              needs = any(
+                  not str(osds[i].get("public_addr", "")).startswith("{{ mesh_host_prefix }}")
+                  or not str(osds[i].get("cluster_addr", "")).startswith("{{ mesh_host_prefix }}")
+                  for i in ids)
+              print("needs-restart" if needs else "already on mesh")
+              PY
+              )
+              if [ "$state" = "already on mesh" ]; then echo "$state"; exit 0; fi
+              systemctl restart ceph-osd.target
+              for i in $(seq 1 60); do
+                if timeout 30 ceph -s -f json | python3 -c '
+              import sys, json
+              s = json.load(sys.stdin)
+              pgs = s["pgmap"].get("pgs_by_state", [])
+              total = s["pgmap"]["num_pgs"]
+              clean = sum(p["count"] for p in pgs if p["state_name"].startswith("active+clean"))
+              o = s["osdmap"]
+              ok = total > 0 and clean == total and o["num_osds"] == o["num_up_osds"] == o["num_in_osds"]
+              sys.exit(0 if ok else 1)'; then
+                  echo "restarted, PGs clean"; exit 0
+                fi
+                sleep 5
+              done
+              echo "PGs did not return to active+clean" >&2; exit 1
+            executable: /bin/bash
+          loop: >-
+            {{ __cutover_tree.ceph.osd_tree.nodes | selectattr('type', 'eq', 'host')
+               | selectattr('children', 'defined') | rejectattr('children', 'eq', [])
+               | map(attribute='name') | sort }}
+          delegate_to: "{{ item }}"
+          loop_control: { label: "OSDs on {{ item }}" }
+          register: __osdmove
+          changed_when: "'already on mesh' not in __osdmove.stdout"
+        # yamllint disable rule:line-length
+        - name: "Move each mon to its loopback address (destroy + create, serially)"
+          ansible.builtin.shell:
+            cmd: |
+              set -o pipefail
+              dump=$(timeout 30 ceph mon dump 2>/dev/null) || { echo "mon dump failed — refusing to touch mons" >&2; exit 1; }
+              if echo "$dump" | grep "mon.{{ item.key }}$" | grep -q '{{ item.value.loopback }}'; then
+                echo "already on mesh"; exit 0
+              fi
+              if echo "$dump" | grep -q "mon.{{ item.key }}$"; then
+                pveceph mon destroy {{ item.key }}
+                ok=0
+                for i in $(seq 1 30); do
+                  n=$(timeout 30 ceph quorum_status -f json 2>/dev/null | python3 -c 'import sys,json; print(len(json.load(sys.stdin)["quorum_names"]))' || echo 0)
+                  [ "$n" -ge 2 ] && { ok=1; break; }
+                  sleep 2
+                done
+                [ "$ok" -eq 1 ] || { echo "quorum did not recover after destroying mon.{{ item.key }} — NOT creating into a quorum-less cluster" >&2; exit 1; }
+              fi
+              pveceph mon create --mon-address {{ item.value.loopback }}
+              for i in $(seq 1 60); do
+                n=$(timeout 30 ceph quorum_status -f json 2>/dev/null | python3 -c 'import sys,json; print(len(json.load(sys.stdin)["quorum_names"]))' || echo 0)
+                [ "$n" -eq {{ mesh | length }} ] && exit 0
+                sleep 3
+              done
+              echo "mon {{ item.key }} did not rejoin quorum" >&2; exit 1
+            executable: /bin/bash
+          loop: "{{ mesh | dict2items }}"
+          delegate_to: "{{ item.key }}"
+          loop_control: { label: "mon.{{ item.key }} -> {{ item.value.loopback }}" }
+          register: __monmove
+          changed_when: "'already on mesh' not in __monmove.stdout"
+        # yamllint enable rule:line-length
+        - name: "Check whether the mgr already binds a mesh address"
+          ansible.builtin.shell: "set -o pipefail; timeout 30 ceph mgr dump | grep -o '\"addr\": \"{{ mesh_host_prefix }}[0-9]*' | head -1 || true"
+          args: { executable: /bin/bash }
+          register: __mgraddr
+          changed_when: false
+        - name: "Restart the mgr so it rebinds to the mesh"
+          ansible.builtin.systemd:
+            name: ceph-mgr.target
+            state: restarted
+          when: __mgraddr.stdout == ""
+        - name: "Unset noout"
+          ansible.builtin.command: timeout 30 ceph osd unset noout
+          changed_when: true
+        - name: "Wait for HEALTH_OK"
+          ansible.builtin.command: ceph health
+          register: __health
+          until: "'HEALTH_OK' in __health.stdout"
+          retries: 40
+          delay: 5
+          changed_when: false
+        - name: "Verify: every mon is on a mesh address"
+          ansible.builtin.shell: "set -o pipefail; ceph mon dump | grep -c 'v2:{{ mesh_host_prefix }}'"
+          args: { executable: /bin/bash }
+          register: __mons
+          changed_when: false
+          failed_when: __mons.stdout != (mesh | length | string)
+        - name: "Verify: every OSD line carries a mesh address"
+          ansible.builtin.shell: "set -o pipefail; timeout 30 ceph osd dump | grep -E '^osd\\.[0-9]' | grep -vc '{{ mesh_host_prefix }}' || true"
+          args: { executable: /bin/bash }
+          register: __osds
+          changed_when: false
+          failed_when: __osds.stdout != "0"
+        - name: "Verify: negative — no OSD retains ANY 1G-LAN bind (catches a public-only partial rebind)"
+          ansible.builtin.shell: "set -o pipefail; timeout 30 ceph osd dump | grep -E '^osd\\.[0-9]' | grep -c '{{ mesh_lan_prefix }}' || true"
+          args: { executable: /bin/bash }
+          register: __lanosds
+          changed_when: false
+          failed_when: __lanosds.stdout != "0"
+        - name: "Verify: negative — no mon still binds the 1G LAN"
+          ansible.builtin.shell: "set -o pipefail; timeout 30 ceph mon dump | grep -c '{{ mesh_lan_prefix }}' || true"
+          args: { executable: /bin/bash }
+          register: __lanmons
+          changed_when: false
+          failed_when: __lanmons.stdout != "0"
+        - name: "Verify: the ACTIVE mgr binds a mesh address"
+          ansible.builtin.shell: "set -o pipefail; timeout 30 ceph mgr dump | grep -q '\"active_addr\": \"{{ mesh_host_prefix }}'"
+          args: { executable: /bin/bash }
+          changed_when: false
+        - name: "Verify: replication traffic rides the fast link (byte-counter delta under load)"
+          when: __osdmove is changed or __monmove is changed
+          ansible.builtin.shell:
+            cmd: |
+              set -o pipefail
+              b0=$(cat /sys/class/net/{{ mesh_bench_iface }}/statistics/tx_bytes)
+              rados bench -p {{ ceph_pool }} 5 write --no-cleanup -b 4M -t 8 > /dev/null
+              rados -p {{ ceph_pool }} cleanup > /dev/null
+              b1=$(cat /sys/class/net/{{ mesh_bench_iface }}/statistics/tx_bytes)
+              delta=$(( (b1 - b0) / 1024 / 1024 ))
+              echo "{{ mesh_bench_iface }} tx during 5s bench: ${delta} MiB"
+              [ "$delta" -gt 100 ]
+            executable: /bin/bash
+          register: __bench
+          changed_when: false
+        - name: "Report"
+          ansible.builtin.debug:
+            msg: >-
+              Ceph is on the mesh: mons + OSDs bound to {{ mesh_prefix }},
+              {{ (__bench.stdout_lines | last) if (__bench is not skipped) else 'bench skipped (nothing moved this run)' }}.
+              Verify anytime with:
+              ceph mon dump ; ceph osd dump | grep osd. ; ceph -s
+      rescue:
+        - name: "Rescue: collect the CURRENT failure state"
+          ansible.builtin.shell: |
+            set -o pipefail
+            timeout 30 ceph health detail || true
+            timeout 30 ceph mon dump 2>/dev/null | grep 'mon\.' || true
+            timeout 30 ceph osd dump 2>/dev/null | grep -E '^osd\.[0-9]' || true
+          args: { executable: /bin/bash }
+          register: __failstate
+          changed_when: false
+          failed_when: false
+        - name: "Rescue: stash the captured pre-cutover ceph.conf where a human can find it"
+          ansible.builtin.copy:
+            content: "{{ __cutover_conf_prior.content | default('') | b64decode }}"
+            dest: /root/ceph.conf.pre-mesh-cutover
+            owner: root
+            group: root
+            mode: "0600"
+          when: __cutover_conf_prior.content is defined
+          register: __cutover_conf_stash
+          failed_when: false
+        - name: "Rescue: fail reporting the original error, the captured prior state, and WHY there is no auto-rollback"
+          ansible.builtin.fail:
+            msg: |-
+              CEPH MESH CUTOVER FAILED — NOT ROLLED BACK, DELIBERATELY.
+              (1) ORIGINAL FAILURE — task '{{ ansible_failed_task.name | default('unknown') }}':
+                  {{ ansible_failed_result.msg | default(ansible_failed_result) | default('(no result captured)') }}
+              (2) WHY NO AUTOMATIC ROLLBACK: reverting is worse than resuming.
+                  - a mon that has already moved is reverted only by DESTROYING it again;
+                    with min_size == size on both pools, a mis-timed second destroy halts
+                    cluster I/O. That is not a rollback, it is a second incident.
+                  - OSDs rebind from ceph.conf at daemon START, so reverting them means
+                    another restart cycle of the daemons that just failed.
+                  - noout was NOT auto-unset: unsetting it while an OSD host is genuinely
+                    down triggers rebalancing mid-incident. That call is yours.
+                  This play is RESUME-safe: fix the cause and re-run with
+                  -e apply_ceph_mesh_cutover=true; completed steps skip.
+              (3) CAPTURED PRE-CUTOVER STATE (what a manual repair aims at):
+                  ceph.conf: {{ (__cutover_conf_prior.content | default('') | b64decode | length) }} bytes,
+                  {{ 'stashed at /root/ceph.conf.pre-mesh-cutover'
+                     if not (__cutover_conf_stash.failed | default(true)) else 'STASH FAILED — the bytes are only in this log' }}
+                  {{ __cutover_state_prior.stdout | default('(prior binds were not captured)') }}
+              (4) CURRENT STATE:
+                  {{ __failstate.stdout | default('(could not be read)') }}

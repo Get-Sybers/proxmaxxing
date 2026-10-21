@@ -1,0 +1,38 @@
+---
+- name: "root_key | The installer's ROOT key file must exist"
+  ansible.builtin.stat:
+    path: "{{ cluster_ludus_install_root }}/install/root-api-key"
+  register: __clr_src
+
+- name: "root_key | Fail clearly when the ROOT key is absent"
+  ansible.builtin.assert:
+    that: __clr_src.stat.exists
+    fail_msg: >-
+      {{ cluster_ludus_install_root }}/install/root-api-key does not exist, so
+      there is no ROOT key to stage. It is written at the end of a successful
+      install — finish installing Ludus first, or set
+      cluster_ludus_install_stage_root_key=false to skip this.
+    quiet: true
+
+- name: "root_key | Ensure the house credential store directory exists (private)"
+  ansible.builtin.file:
+    path: "{{ cluster_ludus_install_vault_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: "root_key | Read the ROOT key from the install tree"
+  ansible.builtin.slurp:
+    src: "{{ cluster_ludus_install_root }}/install/root-api-key"
+  register: __clr_key
+  no_log: true
+
+- name: "root_key | Stage the ROOT key into the house credential store"
+  ansible.builtin.copy:
+    content: "{{ __clr_key.content | b64decode }}"
+    dest: "{{ cluster_ludus_install_vault_dir }}/ROOT.apikey"
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true

@@ -1,0 +1,13 @@
+---
+galaxy_info:
+  role_name: cluster_patch_packer_iso
+  namespace: get_sybers
+  author: Get-Sybers
+  description: >-
+    Redirect stock packer templates at ISOs already held on the build node,
+    instead of re-downloading them. Gated on the ISO manifest by sha256; a
+    template whose ISO we do not hold is left downloading, never broken.
+  license: AGPL-3.0-only
+  min_ansible_version: "2.19.0"
+  galaxy_tags: [packer, iso, proxmox, ludus]
+dependencies: []

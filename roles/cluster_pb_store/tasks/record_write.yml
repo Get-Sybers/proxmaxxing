@@ -1,0 +1,26 @@
+---
+- name: "record_write | Create the record"
+  ansible.builtin.uri:
+    url: "{{ cluster_pb_store_base_url }}/api/collections/{{ cluster_pb_store_collection_name }}/records"
+    method: POST
+    headers:
+      Authorization: "{{ __pb_super_token }}"
+    body_format: json
+    body:
+      name: "{{ cluster_pb_store_record_name }}"
+      value: "{{ cluster_pb_store_record_value }}"
+      note: "{{ cluster_pb_store_record_note }}"
+    validate_certs: "{{ cluster_pb_store_validate_certs }}"
+    status_code: [200]
+  register: __pb_record_write
+  no_log: true
+  changed_when: true
+- name: "record_write | Expose the record id (opaque handle, not a secret)"
+  ansible.builtin.set_fact:
+    __pb_record_id: "{{ __pb_record_write.json.id }}"
+- name: "record_write | Report SHAPE only (hashed label, never the name)"
+  ansible.builtin.debug:
+    msg: >-
+      Record sha256:{{ cluster_pb_store_record_name | hash('sha256') | truncate(12, true, '') }}
+      written to {{ cluster_pb_store_collection_name }} (id={{ __pb_record_id }},
+      value length={{ cluster_pb_store_record_value | length }}).

@@ -1,0 +1,288 @@
+---
+- name: "Collect mon-store backing-pool free space on every node"
+  hosts: proxmox_cluster
+  gather_facts: false
+  ignore_unreachable: true
+  tasks:
+    - name: "Gather the mon-store pool capacity"
+      community.general.zfs_facts:
+        name: "{{ ceph_mon_store_pool }}"
+        properties: available,used
+        parsable: true
+      register: __rpool
+      failed_when: false
+      changed_when: false
+    - name: "Derive the mon-store pool free percentage"
+      ansible.builtin.set_fact:
+        rpool_avail_pct: >-
+          {{ ((__rpool.ansible_facts.ansible_zfs_datasets[0].available | int)
+              * 100.0
+              / (((__rpool.ansible_facts.ansible_zfs_datasets[0].available | int)
+                  + (__rpool.ansible_facts.ansible_zfs_datasets[0].used | int)) | float))
+             | round(1) }}
+        rpool_avail_bytes: "{{ __rpool.ansible_facts.ansible_zfs_datasets[0].available | int }}"
+      when:
+        - __rpool.ansible_facts is defined
+        - __rpool.ansible_facts.ansible_zfs_datasets | default([]) | length > 0
+- name: "Diagnose Ceph"
+  hosts: proxmox_master
+  gather_facts: false
+  tasks:
+    - name: "Gather structured Ceph facts"
+      get_sybers.cluster.ceph_info:
+        queries:
+          - status
+          - health_detail
+          - osd_tree
+          - osd_df
+          - df
+          - osd_dump
+          - osd_pool_ls_detail
+          - pg_dump_stuck
+          - mon_dump
+          - quorum_status
+          - time_sync_status
+          - config_dump
+          - crash_ls
+          - versions
+      register: __ceph
+    - name: "Fail if any diagnostic query was rejected"
+      ansible.builtin.assert:
+        that: __ceph.errors | length == 0
+        fail_msg: "Ceph queries failed: {{ __ceph.errors }}"
+        quiet: true
+    - name: "Extract the objects the checks operate on"
+      ansible.builtin.set_fact:
+        __health: "{{ __ceph.ceph.status.health }}"
+        __osdmap: "{{ __ceph.ceph.status.osdmap }}"
+        __pgmap: "{{ __ceph.ceph.status.pgmap }}"
+        __monmap: "{{ __ceph.ceph.status.monmap }}"
+        __pools: "{{ __ceph.ceph.osd_pool_ls_detail }}"
+        __osd_nodes: "{{ __ceph.ceph.osd_df.nodes }}"
+        __osd_dump: "{{ __ceph.ceph.osd_dump }}"
+        __quorum_names: "{{ __ceph.ceph.status.quorum_names }}"
+        __skew: "{{ __ceph.ceph.time_sync_status.time_skew_status | default({}) }}"
+        __crashes: "{{ __ceph.ceph.crash_ls | default([]) }}"
+        __versions: "{{ __ceph.ceph.versions.overall | default({}) }}"
+        __stuck: "{{ __ceph.ceph.pg_dump_stuck.stuck_pg_stats | default([]) }}"
+    - name: "Derive computed values"
+      ansible.builtin.set_fact:
+        __osd_hosts: >-
+          {{ __ceph.ceph.osd_tree.nodes
+             | selectattr('type', 'eq', 'host') | map(attribute='name') | list }}
+        __pg_not_clean: >-
+          {{ __pgmap.pgs_by_state | rejectattr('state_name', 'eq', 'active+clean') | list }}
+        __osds_not_up: >-
+          {{ __osd_nodes | rejectattr('status', 'eq', 'up') | map(attribute='name') | list }}
+        __config: >-
+          {{ __ceph.ceph.config_dump
+             | items2dict(key_name='name', value_name='value') }}
+        __mon_ips: >-
+          {{ __ceph.ceph.mon_dump.mons
+             | map(attribute='public_addrs.addrvec') | flatten
+             | map(attribute='addr') | map('regex_replace', ':.*$', '') | unique | list }}
+        __max_osd_util: "{{ __osd_nodes | map(attribute='utilization') | max | round(2) }}"
+        __raw_used_ratio: "{{ (__ceph.ceph.df.stats.total_used_raw_ratio * 100) | round(2) }}"
+        __skewed_mons: >-
+          {{ __skew | dict2items
+             | rejectattr('value.health', 'eq', 'HEALTH_OK') | map(attribute='key') | list }}
+        __unplaceable_pools: >-
+          {{ __pools | selectattr('size', 'gt',
+               (__ceph.ceph.osd_tree.nodes | selectattr('type','eq','host') | list | length))
+             | map(attribute='pool_name') | list }}
+    - name: "Compute per-pool redundancy posture"
+      ansible.builtin.set_fact:
+        __pool_posture: >-
+          {{ __pool_posture | default([]) + [{
+               'name': item.pool_name,
+               'size': item.size,
+               'min_size': item.min_size,
+               'pg_num': item.pg_num,
+               'no_write_tolerance': (item.min_size == item.size),
+               'unplaceable': (item.size > (__osd_hosts | length))
+             }] }}
+      loop: "{{ __pools }}"
+      loop_control:
+        label: "{{ item.pool_name }}"
+    - name: "Collect mon-store free space reported by each node"
+      ansible.builtin.set_fact:
+        __mon_store: >-
+          {{ __mon_store | default([]) + [{
+               'node': item,
+               'avail_pct': (hostvars[item].rpool_avail_pct | default(none)),
+               'avail_gb': ((hostvars[item].rpool_avail_bytes | default(0) | int)
+                            / 1024 / 1024 / 1024) | round(1)
+             }] }}
+      loop: "{{ groups['proxmox_cluster'] }}"
+    - name: "Identify mon stores below Ceph's own thresholds"
+      ansible.builtin.set_fact:
+        __mon_disk_warn: >-
+          {{ __mon_store | selectattr('avail_pct', 'ne', none)
+             | selectattr('avail_pct', 'version', ceph_mon_avail_warn_pct, '<') | list }}
+        __mon_disk_crit: >-
+          {{ __mon_store | selectattr('avail_pct', 'ne', none)
+             | selectattr('avail_pct', 'version', ceph_mon_avail_crit_pct, '<') | list }}
+        __mon_disk_unknown: >-
+          {{ __mon_store | selectattr('avail_pct', 'eq', none)
+             | map(attribute='node') | list }}
+    - name: "Evaluate findings"
+      ansible.builtin.set_fact:
+        __findings: >-
+          {{ [
+            {'id': 'CEPH-HEALTH', 'sev': 'CRIT',
+             'trigger': __health.status == 'HEALTH_ERR',
+             'msg': 'Cluster health is HEALTH_ERR: '
+                    ~ (__health.checks | list | join(', '))},
+            {'id': 'CEPH-HEALTH', 'sev': 'WARN',
+             'trigger': __health.status == 'HEALTH_WARN',
+             'msg': 'Cluster health is HEALTH_WARN: '
+                    ~ (__health.checks | list | join(', '))},
+            {'id': 'MON-QUORUM', 'sev': 'CRIT',
+             'trigger': (__quorum_names | length) < (__monmap.num_mons | int),
+             'msg': 'Only ' ~ (__quorum_names | length) ~ ' of ' ~ __monmap.num_mons
+                    ~ ' mons in quorum: ' ~ (__quorum_names | join(', '))},
+            {'id': 'OSD-DOWN', 'sev': 'CRIT',
+             'trigger': (__osdmap.num_up_osds | int) < (__osdmap.num_osds | int),
+             'msg': (__osdmap.num_up_osds | string) ~ '/' ~ (__osdmap.num_osds | string)
+                    ~ ' OSDs up; down: ' ~ (__osds_not_up | join(', '))},
+            {'id': 'OSD-OUT', 'sev': 'CRIT',
+             'trigger': (__osdmap.num_in_osds | int) < (__osdmap.num_osds | int),
+             'msg': (__osdmap.num_in_osds | string) ~ '/' ~ (__osdmap.num_osds | string)
+                    ~ ' OSDs in'},
+            {'id': 'PG-UNCLEAN', 'sev': 'CRIT',
+             'trigger': (__pg_not_clean | length) > 0,
+             'msg': 'PG states other than active+clean: '
+                    ~ (__pg_not_clean | map(attribute='state_name') | join(', '))},
+            {'id': 'PG-STUCK', 'sev': 'CRIT',
+             'trigger': (__stuck | length) > 0,
+             'msg': (__stuck | length | string) ~ ' stuck PG(s)'},
+            {'id': 'POOL-UNPLACEABLE', 'sev': 'CRIT',
+             'trigger': (__pool_posture | selectattr('unplaceable') | list | length) > 0,
+             'msg': 'Pool replica count exceeds OSD host count ('
+                    ~ (__osd_hosts | length | string) ~ '), replicas can never place: '
+                    ~ (__pool_posture | selectattr('unplaceable')
+                       | map(attribute='name') | join(', '))},
+            {'id': 'NO-WRITE-TOLERANCE', 'sev': 'WARN',
+             'trigger': (__pool_posture | selectattr('no_write_tolerance') | list | length) > 0,
+             'msg': 'min_size == size on: '
+                    ~ (__pool_posture | selectattr('no_write_tolerance')
+                       | map(attribute='name') | join(', '))
+                    ~ ' — losing ONE OSD host halts writes cluster-wide '
+                    ~ '(this is the documented deliberate trade-off, not drift)'},
+            {'id': 'MON-DISK', 'sev': 'CRIT',
+             'trigger': (__mon_disk_crit | length) > 0,
+             'msg': 'Mon store below ' ~ (ceph_mon_avail_crit_pct | string) ~ '% free on: '
+                    ~ (__mon_disk_crit | map(attribute='node') | join(', '))},
+            {'id': 'MON-DISK', 'sev': 'WARN',
+             'trigger': (__mon_disk_warn | length) > 0 and (__mon_disk_crit | length) == 0,
+             'msg': 'Mon store below Ceph mon_data_avail_warn ('
+                    ~ (ceph_mon_avail_warn_pct | string) ~ '%) on: '
+                    ~ (__mon_disk_warn | map(attribute='node')
+                       | join(', '))},
+            {'id': 'MON-DISK-UNKNOWN', 'sev': 'INFO',
+             'trigger': (__mon_disk_unknown | length) > 0,
+             'msg': 'Could not read ' ~ ceph_mon_store_pool ~ ' capacity (node unreachable?): '
+                    ~ (__mon_disk_unknown | join(', '))},
+            {'id': 'CLOCK-SKEW', 'sev': 'WARN',
+             'trigger': (__skewed_mons | length) > 0,
+             'msg': 'Mon clock skew flagged on: ' ~ (__skewed_mons | join(', '))},
+            {'id': 'CAPACITY-NEARFULL', 'sev': 'WARN',
+             'trigger': (__max_osd_util | float) >= ((__osd_dump.nearfull_ratio | float) * 100),
+             'msg': 'An OSD is at or past the nearfull ratio ('
+                    ~ ((__osd_dump.nearfull_ratio | float) * 100) | round(0) | string ~ '%)'},
+            {'id': 'CRASHES', 'sev': 'WARN',
+             'trigger': (__crashes | length) > 0,
+             'msg': (__crashes | length | string) ~ ' recorded daemon crash(es)'},
+            {'id': 'VERSION-SKEW', 'sev': 'WARN',
+             'trigger': (__versions | length) > 1,
+             'msg': 'Mixed Ceph versions running: ' ~ (__versions | list | join(' | '))},
+            {'id': 'MESH-BINDING', 'sev': 'WARN',
+             'trigger': (__mon_ips | reject('match', ceph_mesh_prefix | regex_escape) | list | length) > 0,
+             'msg': 'Mon(s) not bound to the ' ~ ceph_mesh_prefix
+                    ~ '0/24 storage fabric: '
+                    ~ (__mon_ips | reject('match', ceph_mesh_prefix | regex_escape)
+                       | join(', '))
+                    ~ ' — the 2026-07-23 mesh cutover may have regressed'},
+            {'id': 'TUNING-ABSENT', 'sev': 'WARN',
+             'trigger': (ceph_expected_config | dict2items
+                         | rejectattr('key', 'in', __config | list) | list | length) > 0,
+             'msg': 'Settings absent from the mon config store: '
+                    ~ (ceph_expected_config | dict2items
+                       | rejectattr('key', 'in', __config | list)
+                       | map(attribute='key') | join(', '))
+                    ~ ' — re-run cluster-ceph-tuning.yml'}
+          ] | selectattr('trigger') | list }}
+    - name: "Detect tuning values that exist but differ from the house standard"
+      ansible.builtin.set_fact:
+        __tuning_mismatch: >-
+          {{ __tuning_mismatch | default([]) +
+             ([item.key ~ '=' ~ (__config[item.key]) ~ ' (expected ' ~ item.value ~ ')']
+              if (item.key in __config and (__config[item.key] | string) != (item.value | string))
+              else []) }}
+      loop: "{{ ceph_expected_config | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+    - name: "Fold tuning mismatches into the findings"
+      ansible.builtin.set_fact:
+        __findings: >-
+          {{ __findings + [{'id': 'TUNING-DRIFT', 'sev': 'WARN',
+                           'msg': 'Values differ from cluster-ceph-tuning.yml: '
+                                  ~ (__tuning_mismatch | join('; '))}] }}
+      when: __tuning_mismatch | default([]) | length > 0
+    - name: "Compute the node-maintenance verdict"
+      ansible.builtin.set_fact:
+        __crit_count: "{{ __findings | selectattr('sev', 'eq', 'CRIT') | list | length }}"
+        __osd_hosts_list: "{{ __osd_hosts }}"
+        __reboot_verdict: >-
+          {{ 'BLOCKED — resolve CRIT findings first'
+             if (__findings | selectattr('sev', 'eq', 'CRIT') | list | length) > 0
+             else ('WRITES WILL HALT — every pool has min_size == size, so taking '
+                   ~ 'any OSD host (' ~ (__osd_hosts | join(', ')) ~ ') down blocks '
+                   ~ 'cluster I/O until it returns. Non-OSD nodes may reboot freely.'
+                   if (__pool_posture | selectattr('no_write_tolerance') | list | length)
+                      == (__pool_posture | length)
+                   else 'OK — cluster is clean and can lose a host') }}
+    - name: "Ceph diagnosis"
+      ansible.builtin.debug:
+        msg: >-
+          {{
+          ['============ CEPH DIAGNOSIS — ' ~ __ceph.fsid ~ ' ============',
+           'Health          : ' ~ __health.status,
+           'Version         : ' ~ (__versions | list | join(', ')),
+           'Mons            : ' ~ (__quorum_names | length | string) ~ '/'
+                                ~ (__monmap.num_mons | string) ~ ' in quorum ('
+                                ~ (__quorum_names | join(', ')) ~ ')',
+           'Mon addresses   : ' ~ (__mon_ips | join(', ')),
+           'OSDs            : ' ~ (__osdmap.num_up_osds | string) ~ ' up / '
+                                ~ (__osdmap.num_in_osds | string) ~ ' in / '
+                                ~ (__osdmap.num_osds | string) ~ ' total, across '
+                                ~ (__osd_hosts | length | string) ~ ' host(s): '
+                                ~ (__osd_hosts | join(', ')),
+           'PGs             : ' ~ (__pgmap.num_pgs | string) ~ ' — '
+                                ~ (__pgmap.pgs_by_state
+                                   | map(attribute='state_name') | join(', ')),
+           'Raw capacity    : ' ~ (__raw_used_ratio | string) ~ '% used, max OSD '
+                                ~ (__max_osd_util | string) ~ '% (nearfull at '
+                                ~ (((__osd_dump.nearfull_ratio | float) * 100)
+                                   | round(0) | int | string) ~ '%)',
+           'Objects         : ' ~ (__pgmap.num_objects | string),
+           '']
+          + ['--- pools ---']
+          + (__pool_posture | map('to_json') | list)
+          + ['', '--- mon store free space (' ~ ceph_mon_store_pool ~ ') ---']
+          + (__mon_store | map('to_json') | list)
+          + ['', '--- findings (' ~ (__findings | length | string) ~ ') ---']
+          + (__findings | map(attribute='sev') | zip(__findings | map(attribute='id'),
+                                                    __findings | map(attribute='msg'))
+             | map('join', '  ') | list
+             if __findings | length > 0 else ['none — cluster is clean'])
+          + ['', '--- node maintenance verdict ---', __reboot_verdict]
+          }}
+    - name: "Enforce the gate when asked"
+      ansible.builtin.assert:
+        that: (__crit_count | int) == 0
+        fail_msg: >-
+          Ceph gate FAILED: {{ __crit_count }} critical finding(s).
+          {{ __findings | selectattr('sev', 'eq', 'CRIT') | map(attribute='msg') | join(' | ') }}
+        success_msg: "Ceph gate passed: no critical findings."
+      when: ceph_gate_strict | bool

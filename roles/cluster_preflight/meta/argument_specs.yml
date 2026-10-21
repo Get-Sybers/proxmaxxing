@@ -1,0 +1,31 @@
+---
+argument_specs:
+  main:
+    short_description: "Admission gate cluster plays include FIRST: running as root, on a PVE cluster node, and (opt-in) an admin API key in the env."
+    description:
+      - >-
+        Three checks included from main.yml: effective uid is 0, the host is a
+        PVE cluster node, and — only when cluster_preflight_require_api_admin is
+        set by the play — the LUDUS_API_KEY in the ENVIRONMENT authenticates to
+        the Ludus API as an admin. It never reads any key file. The published
+        cluster_preflight_auth_* facts are internal, not inputs.
+    options:
+      cluster_preflight_require_api_admin:
+        type: bool
+        required: false
+        default: false
+        description: "Set true by the PLAY (at include time) for plays that call the Ludus API, to run the env API-admin check."
+      cluster_preflight_api_url:
+        type: str
+        required: false
+        default: "https://127.0.0.1:8080/api/v2"
+        description: "The Ludus API as seen from the host the play runs on (default assumes the Ludus server node)."
+      cluster_preflight_delegate_to:
+        type: str
+        required: false
+        description: "The host every check here executes on. Computed default: {{ inventory_hostname }} (the play's target, no delegation)."
+      cluster_preflight_cluster_group:
+        type: str
+        required: false
+        default: proxmox_cluster
+        description: "Inventory group of the cluster nodes; membership admits a host that `pvecm nodes` does not yet list."

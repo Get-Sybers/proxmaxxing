@@ -1,0 +1,16 @@
+---
+cluster_pb_store_base_url: "https://127.0.0.1:8080"
+cluster_pb_store_validate_certs: false
+cluster_pb_store_superuser_identity: root@ludus.internal
+cluster_pb_store_collection_name: gs_infra_credentials
+cluster_pb_store_collection_rules:
+  listRule: "@request.auth.isAdmin = true"
+  viewRule: "@request.auth.isAdmin = true"
+  createRule: null
+  updateRule: null
+  deleteRule: null
+cluster_pb_store_record_name: ""
+cluster_pb_store_record_value: ""
+cluster_pb_store_record_note: ""
+cluster_pb_store_record_id: ""
+cluster_pb_store_record_fields: {}

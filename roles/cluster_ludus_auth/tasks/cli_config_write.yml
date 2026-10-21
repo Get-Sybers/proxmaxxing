@@ -1,0 +1,18 @@
+---
+- name: "cli_config_write | Ensure the ludus CLI config directory exists (0700)"
+  ansible.builtin.file:
+    path: "{{ cluster_ludus_auth_cli_config_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+- name: "cli_config_write | Write the ludus CLI server settings (url only, no key)"
+  ansible.builtin.copy:
+    content: |
+      url: {{ cluster_ludus_auth_cli_url }}
+      verify: false
+    dest: "{{ cluster_ludus_auth_cli_config_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+    backup: false

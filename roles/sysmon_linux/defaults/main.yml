@@ -1,0 +1,18 @@
+---
+sysmon_linux_artefacts: []
+sysmon_linux_stage_dir: /var/cache/sysmon-linux
+sysmon_linux_node_stage_dir: /var/cache/sysmon-linux
+sysmon_linux_config_path: /etc/sysmon/config.xml
+sysmon_linux_schema_version: "4.90"
+sysmon_linux_hash_algorithms: sha256
+# Loopback only by default; the inventory adds the site's own networks.
+sysmon_linux_excluded_dest_prefixes:
+  - "127."
+  - "::1"
+sysmon_linux_watched_paths:
+  - /etc/
+  - /root/.ssh/
+  - /usr/local/sbin/
+  - /usr/local/bin/
+  - /var/spool/cron/
+  - /lib/systemd/system/

@@ -1,0 +1,17 @@
+---
+- name: "collection_verify | Collection present with the desired rules"
+  ansible.builtin.assert:
+    that:
+      - __pb_collection_present | bool
+      - __pb_collection_rules_match | bool
+    fail_msg: >-
+      End-state verification failed for '{{ cluster_pb_store_collection_name }}':
+      present={{ __pb_collection_present }},
+      rules_match={{ __pb_collection_rules_match }}. If this play just ran in
+      --check mode against a missing collection, that is expected (creation
+      was not simulated); otherwise inspect the collection via the superadmin
+      UI (docs/administration/pocketbase.md).
+    success_msg: >-
+      '{{ cluster_pb_store_collection_name }}' present, rules as ruled
+      (list/view admin-scoped, mutations superuser-only).
+    quiet: true

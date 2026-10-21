@@ -1,0 +1,71 @@
+# get_sybers.cluster — controller image for running the cluster-*.yml plays.
+#
+# Built and run with Apple's `container` runtime on macOS (https://github.com/
+# apple/container), but this is a plain OCI/Dockerfile and builds under Docker or
+# Podman unchanged. It is the ANSIBLE CONTROLLER, not a PVE node: it holds
+# ansible-core, the pinned Galaxy collections and the Python SDKs those
+# collections call out to, and reaches the real cluster over SSH / the PVE API.
+#
+# Debian trixie (Debian 13) matches the PVE 9 host family and the molecule
+# substrate (extensions/molecule/Dockerfile); same base digest so the controller
+# and the test substrate move together. ansible-core 2.21 needs a Python >=3.12
+# controller, which trixie's python3 (3.13) provides.
+ARG DEBIAN_BASE=docker.io/library/debian:trixie-slim@sha256:918311b7b6c4c6f68b232ba516584925f6c78ad82b6fd534b98979df6438e483
+FROM ${DEBIAN_BASE}
+
+# ansible-core line to install. Bounded to one minor by default so a rebuild
+# cannot cross into a new feature release unnoticed; override to test another
+# (the collection's tox matrix covers 2.19–2.21):
+#   container build --build-arg ANSIBLE_CORE=">=2.20,<2.21" ...
+ARG ANSIBLE_CORE=">=2.21,<2.22"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    VIRTUAL_ENV=/opt/ansible \
+    PATH=/opt/ansible/bin:/usr/bin:/bin \
+    ANSIBLE_COLLECTIONS_PATH=/usr/share/ansible/collections
+
+# Base OS: python + an isolated venv (trixie is PEP 668 externally-managed, so we
+# do not touch the system interpreter), an SSH client to reach the nodes, git
+# (SCM-sourced roles/pins), rsync (ansible.posix.synchronize), sshpass (only used
+# if a play ever falls back to password auth), and the few fact-gathering tools
+# the plays shell out to. Cache cleared in-layer.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3 \
+        python3-venv \
+        openssh-client \
+        sshpass \
+        git \
+        rsync \
+        iproute2 \
+        ca-certificates \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m venv "$VIRTUAL_ENV"
+
+# Controller Python deps: ansible-core (pinned by the build arg) plus the SDKs the
+# pinned collections import at runtime and the validators that let this image
+# double as a syntax/lint gate. requirements-runtime.txt carries everything
+# except ansible-core so the arg stays the single knob for the core version.
+COPY container/requirements-runtime.txt /tmp/requirements-runtime.txt
+RUN pip install --upgrade pip \
+    && pip install "ansible-core${ANSIBLE_CORE}" \
+    && pip install -r /tmp/requirements-runtime.txt
+
+# Bake the Galaxy collections at the repo's pinned versions. requirements.yml is
+# the collection's single source of pinned versions (ansible-standards §13), so
+# the image and a `make deps` host install resolve identically. Copied from the
+# build context root (the collection root — see run.sh).
+COPY requirements.yml /tmp/requirements.yml
+RUN ansible-galaxy collection install -r /tmp/requirements.yml -p "$ANSIBLE_COLLECTIONS_PATH"
+
+# The live checkout is bind-mounted here at run time (the collection root ->
+# /work/collection via run.sh), so nothing from the tree is COPYed in — edits
+# need no rebuild.
+WORKDIR /work/collection
+
+# No ENTRYPOINT: run.sh passes an explicit command (ansible-playbook,
+# ansible-lint, a shell, …). A bare `container run <image>` drops to bash.
+CMD ["/bin/bash"]

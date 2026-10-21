@@ -1,0 +1,11 @@
+---
+# cluster_ludus_install negative — with no install under the target root (the
+# Debian test container has none) and the installer disabled, the role must refuse
+# cleanly at the install guard before touching config.yml or any service.
+scenario:
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - converge
+    - destroy

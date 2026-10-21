@@ -1,0 +1,20 @@
+---
+removed:
+  - >-
+    The LXC tier moved to its own repository and collection,
+    `get-sybers/lxc <https://github.com/get-sybers/lxc>`__ (``get_sybers.lxc``),
+    which owns both the build of every hardened container and every sanctioned
+    way of interacting with one. Gone from here: the roles
+    ``cluster_onepassword_connect`` and ``cluster_onepassword_item``, the plays
+    ``cluster-onepassword-connect`` and ``cluster-onepassword-reflect``, their
+    Molecule scenarios, ``inventory/group_vars/all/onepassword.yml``,
+    ``inventory/secrets/onepassword.yml.example`` and
+    ``docs/05-1Password-Integration.md``. They continue there as
+    ``lxc_onepassword_connect`` / ``lxc_onepassword_item``,
+    ``deploy-onepassword-connect`` / ``reflect-onepassword-credentials`` and
+    ``doc/howto/deploy-onepassword-connect.md``, with the container lifecycle factored into
+    a shared ``lxc_guest`` role.
+  - >-
+    ``onepassword.connect`` is no longer a collection dependency, and the
+    controller container no longer carries ``onepasswordconnectsdk`` or forwards
+    ``OP_CONNECT_*``.

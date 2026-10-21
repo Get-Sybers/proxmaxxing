@@ -1,0 +1,16 @@
+---
+galaxy_info:
+  role_name: cluster_preflight
+  namespace: get_sybers
+  author: Get-Sybers
+  description: >-
+    Admission gate for cluster plays: running as root, on a PVE cluster node,
+    and (opt-in) holding a live admin Ludus API key in the environment.
+  company: Get-Sybers
+  license: AGPL-3.0-only
+  min_ansible_version: "2.19.0"
+  platforms:
+    - name: Debian
+      versions: [bookworm, trixie]
+  galaxy_tags: [proxmox, cluster, preflight]
+dependencies: []

@@ -1,0 +1,9 @@
+---
+- name: "refuse_check | Refuse --check (live auth actions cannot be simulated)"
+  ansible.builtin.assert:
+    that: not ansible_check_mode
+    fail_msg: >-
+      This play authenticates against the live Ludus API and may execute
+      ludus CLI commands; check mode cannot simulate that and will not
+      half-run it. Re-run without --check.
+    quiet: true

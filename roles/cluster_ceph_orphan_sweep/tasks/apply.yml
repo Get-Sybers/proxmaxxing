@@ -1,0 +1,23 @@
+---
+- name: "apply | Remove orphaned RBD disks (rbd rm — cfs-lock bypass)"
+  ansible.builtin.command: "rbd rm {{ cluster_ceph_orphan_sweep_pool }}/{{ item }} --no-progress"
+  loop: "{{ __cos_to_remove }}"
+  register: __cos_rm
+  changed_when: __cos_rm.rc == 0
+  delegate_to: "{{ cluster_ceph_orphan_sweep_delegate_to }}"
+  failed_when: >-
+    __cos_rm.rc != 0 and __cos_rm.rc != 2
+    and ('No such file or directory' not in (__cos_rm.stderr | default('')))
+- name: "apply | Re-list the pool"
+  ansible.builtin.command: "rbd ls {{ cluster_ceph_orphan_sweep_pool }}"
+  register: __cos_post_ls
+  changed_when: false
+  check_mode: false
+  delegate_to: "{{ cluster_ceph_orphan_sweep_delegate_to }}"
+- name: "apply | Assert every removed image is gone"
+  ansible.builtin.assert:
+    that: item not in __cos_post_ls.stdout_lines
+    fail_msg: "Orphan {{ item }} still present after rbd rm — investigate manually."
+    quiet: true
+  loop: "{{ __cos_to_remove }}"
+  when: not ansible_check_mode

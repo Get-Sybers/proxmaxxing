@@ -1,0 +1,48 @@
+---
+- name: "Post-update reconcile — re-apply local patches to stock Ludus files"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  pre_tasks:
+    - name: "Running as root"
+      ansible.builtin.assert:
+        that: lookup('pipe', 'id -u') == '0'
+        fail_msg: "must run as root — this rewrites files in the stock Ludus tree"
+        quiet: true
+  roles:
+    - role: get_sybers.cluster.cluster_patch_ludus
+    - role: get_sybers.cluster.cluster_plugin_packer
+  post_tasks:
+    - name: "Read the current ACL table (read-only)"
+      ansible.builtin.command: pveum acl list --output-format json
+      register: __reconcile_acl
+      changed_when: false
+      tags: [pveum_noaccess]
+    - name: "Ludus_users → NoAccess still stands on every isolated pool"
+      ansible.builtin.assert:
+        that:
+          - __reconcile_acl.stdout | from_json
+            | selectattr('path', 'equalto', '/pool/' ~ item)
+            | selectattr('ugid', 'equalto', 'ludus_users')
+            | selectattr('roleid', 'equalto', 'NoAccess')
+            | list | length > 0
+        fail_msg: >-
+          /pool/{{ item }} has NO ludus_users → NoAccess override. `ludus-server
+          --update` re-adds the pool-wide grant (USER-ROLE §6 time-bomb), so it
+          is live RIGHT NOW. Repair it with the infra play that owns this:
+            cd /opt/ludus/users/<user>/.ansible/collections/ansible_collections/get_sybers/infra
+            ansible-playbook playbooks/reconcile-pool-noaccess.yml
+          then re-run this play to re-prove it.
+        success_msg: "/pool/{{ item }}: ludus_users → NoAccess stands"
+        quiet: true
+      loop: "{{ reconcile_noaccess_pools }}"
+      tags: [pveum_noaccess]
+    - name: "Re-prove the vault single-key invariant"
+      ansible.builtin.include_tasks:
+        file: tasks/vault-invariant-compose.yml
+        apply:
+          tags: [vault_invariant]
+      when:
+        - reconcile_verify_vault_invariant | bool
+        - not ansible_check_mode
+      tags: [vault_invariant]

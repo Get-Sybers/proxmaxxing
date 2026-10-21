@@ -1,0 +1,15 @@
+---
+fixed:
+  - >-
+    ``get_sybers.cluster.to_config_yaml`` lost the sequence indentation the
+    inventory's yamllint requires wherever PyYAML is built with libyaml (every
+    CI runner, most workstations): the C emitter ignores the Python-level
+    indentation override. The filter now renders through PyYAML's pure-Python
+    safe dumper, reducing Ansible's tagged scalars to plain values first, so
+    ``cluster-discover`` writes the same file everywhere.
+trivial:
+  - >-
+    ``scripts/molecule_lanes.py`` no longer carries a shebang (ansible-test's
+    shebang sanity test rejects ``#!/usr/bin/env python3`` outside plugins);
+    CI already invokes it as ``python3 scripts/molecule_lanes.py``, like the
+    other scripts.

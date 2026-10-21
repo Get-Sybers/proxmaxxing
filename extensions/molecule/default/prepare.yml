@@ -1,0 +1,13 @@
+---
+- name: Prepare
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Seed a root-owned 0600 secret file (a labelled RA-key line)
+      ansible.builtin.copy:
+        content: "api key: RA.TESTtoken_0123456789.abcDEF\n"
+        dest: /etc/cluster-secrets-test.key
+        owner: root
+        group: root
+        mode: "0600"

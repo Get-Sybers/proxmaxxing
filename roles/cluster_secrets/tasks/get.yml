@@ -1,0 +1,11 @@
+---
+- name: "get | Assert a request was supplied"
+  ansible.builtin.assert:
+    that:
+      - cluster_secrets_request.name is defined
+      - cluster_secrets_backend in ['file', 'keychain']
+    fail_msg: "infra_secrets needs cluster_secrets_request.name and a supported backend."
+    quiet: true
+  tags: [always]
+- name: "get | Fetch via the backend {{ cluster_secrets_backend }}"
+  ansible.builtin.include_tasks: "backend_{{ cluster_secrets_backend }}.yml"

@@ -1,0 +1,11 @@
+---
+- name: "report_shell | Report how to finish authenticating this shell"
+  ansible.builtin.debug:
+    msg:
+      - "Authenticated: {{ cluster_ludus_auth_user }} (admin={{ cluster_ludus_auth_is_admin }}), proven at /whoami."
+      - "Run this in your shell, then use ludus directly:"
+      - "    source {{ cluster_ludus_auth_env_file }}"
+      - "    ludus range list"
+      - "NOTE: an already-exported LUDUS_API_KEY wins over everything — if ludus
+         says 'Invalid API key' after sourcing, a stale key is still exported
+         in this shell."

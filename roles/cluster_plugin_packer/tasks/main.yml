@@ -1,0 +1,137 @@
+---
+- name: "Packer must be on PATH"
+  ansible.builtin.command:
+    argv: [packer, version]
+  register: __pp_packer
+  changed_when: false
+  failed_when: false
+  check_mode: false
+- name: "Fail clearly when packer is absent"
+  ansible.builtin.assert:
+    that: __pp_packer.rc == 0
+    fail_msg: >-
+      `packer version` failed (rc={{ __pp_packer.rc }}). packer is required to
+      install plugins — is this the Ludus host, and is packer installed?
+      Nothing was changed.
+    quiet: true
+- name: "The plugin root's parent must exist"
+  ansible.builtin.stat:
+    path: "{{ cluster_plugin_packer_root | dirname }}"
+  register: __pp_parent
+  check_mode: false
+- name: "Fail clearly when the parent is missing"
+  ansible.builtin.assert:
+    that:
+      - __pp_parent.stat.exists | default(false)
+      - __pp_parent.stat.isdir | default(false)
+    fail_msg: >-
+      {{ cluster_plugin_packer_root | dirname }} does not exist. This does not
+      look like a completed Ludus install ({{ cluster_plugin_packer_root
+      | dirname | dirname }} should carry packer/). Refusing to create the tree
+      blind — nothing was changed.
+    quiet: true
+- name: "Every file currently under the plugin root"
+  ansible.builtin.find:
+    paths: "{{ cluster_plugin_packer_root }}"
+    recurse: true
+    file_type: file
+  register: __pp_pre_files
+  check_mode: false
+- name: "What `packer plugins installed` reports before any change"
+  ansible.builtin.command:
+    argv: [packer, plugins, installed]
+  environment:
+    PACKER_PLUGIN_PATH: "{{ cluster_plugin_packer_root }}"
+  register: __pp_pre_listing
+  changed_when: false
+  check_mode: false
+- name: "Record the pre-state"
+  ansible.builtin.set_fact:
+    __pp_pre_state:
+      files: "{{ __pp_pre_files.files | map(attribute='path') | sort }}"
+      listing: "{{ __pp_pre_listing.stdout_lines }}"
+- name: "Ensure each pinned plugin is installed and verified"
+  block:
+    - name: "Assess and, only if absent, install each plugin"
+      ansible.builtin.include_tasks: install_one.yml
+      loop: "{{ cluster_plugin_packer_list }}"
+      loop_control:
+        loop_var: plugin
+        label: "{{ plugin.source }} v{{ plugin.version }}"
+  rescue:
+    - name: "Report the pre-state captured before any change"
+      ansible.builtin.debug:
+        msg:
+          failure: >-
+            cluster_plugin_packer_list failed mid-run. Nothing was deleted by this
+            role. The state below is what existed BEFORE the run started.
+          pre_state: "{{ __pp_pre_state }}"
+    - name: "Re-raise the failure"
+      ansible.builtin.fail:
+        msg: >-
+          cluster_plugin_packer_list failed — see the task error above and the
+          captured pre-state in the previous debug message.
+- name: "The plugin tree is {{ cluster_plugin_packer_owner ~ ':' ~ cluster_plugin_packer_group }}"
+  ansible.builtin.file:
+    path: "{{ cluster_plugin_packer_root }}/{{ item }}"
+    state: directory
+    owner: "{{ cluster_plugin_packer_owner }}"
+    group: "{{ cluster_plugin_packer_group }}"
+    recurse: true
+  loop: "{{ cluster_plugin_packer_list | map(attribute='source')
+            | map('regex_replace', '/.*$', '') | unique | list }}"
+- name: "List installed plugins from the pinned root"
+  ansible.builtin.command:
+    argv: [packer, plugins, installed]
+  environment:
+    PACKER_PLUGIN_PATH: "{{ cluster_plugin_packer_root }}"
+  register: __pp_post_listing
+  changed_when: false
+  check_mode: false
+- name: "Every pinned plugin appears in the listing"
+  ansible.builtin.assert:
+    that: >-
+      __pp_post_listing.stdout is
+      search((cluster_plugin_packer_root ~ '/' ~ item.source ~
+              '/packer-plugin-' ~ (item.source | basename) ~
+              '_v' ~ item.version ~ '_') | regex_escape)
+    fail_msg: >-
+      {{ item.source }} v{{ item.version }} does not appear in
+      `packer plugins installed` output from
+      PACKER_PLUGIN_PATH={{ cluster_plugin_packer_root }}. The install
+      reported success but packer cannot resolve the plugin — the next
+      template build would fail with "Unknown source type". Listing was:
+      {{ __pp_post_listing.stdout_lines }}
+    quiet: true
+  loop: "{{ cluster_plugin_packer_list }}"
+  loop_control:
+    label: "{{ item.source }} v{{ item.version }}"
+  when: not ansible_check_mode
+- name: "Re-scan the plugin root"
+  ansible.builtin.find:
+    paths: "{{ cluster_plugin_packer_root }}"
+    recurse: true
+    file_type: file
+  register: __pp_post_files
+  check_mode: false
+- name: "NEGATIVE — no pre-existing file was deleted"
+  ansible.builtin.assert:
+    that: >-
+      __pp_pre_state.files
+      | difference(__pp_post_files.files | map(attribute='path') | list)
+      | length == 0
+    fail_msg: >-
+      Files present before the run are GONE:
+      {{ __pp_pre_state.files
+         | difference(__pp_post_files.files | map(attribute='path') | list) }}.
+      This role never deletes — something else removed them mid-run.
+    quiet: true
+- name: "Report"
+  ansible.builtin.debug:
+    msg:
+      pinned: "{{ cluster_plugin_packer_list
+                  | map(attribute='source') | zip(cluster_plugin_packer_list
+                  | map(attribute='version')) | map('join', ' v') | list }}"
+      files_before: "{{ __pp_pre_state.files | length }}"
+      files_after: "{{ __pp_post_files.files | length }}"
+      listing: "{{ __pp_post_listing.stdout_lines }}"

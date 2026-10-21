@@ -1,0 +1,75 @@
+---
+argument_specs:
+  main:
+    short_description: "Task LIBRARY: single-action Ludus auth/credential files chained by a play via tasks_from (a bare include fails loudly)."
+    description:
+      - >-
+        cluster_ludus_auth has no default sequence. It is a library of
+        single-action task files (refuse_check, require_caller_key,
+        prove_caller, credential_fetch_apikey, dek_read, whoami,
+        env_file_write, key_mint, forget, ...) chained by the calling play via
+        tasks_from. The options below are the defaults-backed inputs those
+        entry points read; secret facts (_cla_*) and the published facts
+        cluster_ludus_auth_status/user/is_admin are internal, not inputs.
+    options:
+      cluster_ludus_auth_identity:
+        type: str
+        required: false
+        default: "RA"
+        description: "The Ludus userID being authenticated — whose key is fetched and whose /whoami identity is asserted."
+      cluster_ludus_auth_record:
+        type: str
+        required: false
+        description: "The gs_infra_credentials record holding that identity's API key. Computed default: <identity>.apikey."
+      cluster_ludus_auth_api_url:
+        type: str
+        required: false
+        default: "https://127.0.0.1:8080/api/v2"
+        description: "The local Ludus v2 API, as seen from the Ludus server node."
+      cluster_ludus_auth_config_path:
+        type: str
+        required: false
+        default: "/opt/ludus/config.yml"
+        description: "Ludus config read by dek_read.yml for the database_encryption_key the PB records are sealed under."
+      cluster_ludus_auth_dek_public_default:
+        type: str
+        required: false
+        default: "hZD6RwYxrcQ7CS4lRxjdKI7thWp3jg48"
+        description: "The public default DEK published upstream; dek_read.yml refuses it (#173). Not a secret."
+      cluster_ludus_auth_pb_url:
+        type: str
+        required: false
+        default: "https://127.0.0.1:8080"
+        description: "PocketBase as Ludus serves it (same host/port as the v2 API), for the API-key fetch path."
+      cluster_ludus_auth_pb_collection:
+        type: str
+        required: false
+        default: "gs_infra_credentials"
+        description: "The PocketBase credentials collection the API-key fetch reads from."
+      cluster_ludus_auth_helper:
+        type: str
+        required: false
+        description: "The AES-256-GCM helper shipped beside the cluster playbooks. Computed default: {{ playbook_dir }}/files/pb-aesgcm.py."
+      cluster_ludus_auth_cli_config_file:
+        type: str
+        required: false
+        description: "Where cli_config_write.yml writes the ludus CLI's server settings (URL only, no key). Computed default: $HOME/.config/ludus/config.yml."
+      cluster_ludus_auth_cli_url:
+        type: str
+        required: false
+        default: "https://127.0.0.1:8080"
+        description: "The server URL written into the CLI config (the CLI's built-in default is an upstream placeholder)."
+      cluster_ludus_auth_env_file:
+        type: str
+        required: false
+        description: "Where env_file_write.yml writes the proven key as a sourceable export line (0600, root). Computed default: $HOME/.config/ludus/ludus.env."
+      cluster_ludus_auth_staging_file:
+        type: str
+        required: false
+        default: "/root/.ludus-key-rotate-staging"
+        description: "Root-only crash-safety staging file for key rotation (deliberately NOT under the locked vault mountpoint)."
+      cluster_ludus_auth_mint_target:
+        type: str
+        required: false
+        default: "RA"
+        description: "The userID whose key key_mint.yml mints (rotation TARGET, distinct from cluster_ludus_auth_identity)."

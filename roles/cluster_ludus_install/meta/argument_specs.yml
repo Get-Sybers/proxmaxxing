@@ -1,0 +1,146 @@
+---
+argument_specs:
+  main:
+    short_description: "Install (optionally) and idempotently reconcile a Ludus server for this Proxmox cluster."
+    description:
+      - >-
+        Ensures the Ludus install at O(cluster_ludus_install_root) is present and
+        that the SAFE keys of its C(config.yml) match this cluster (shared Ceph
+        storage with the C(raw) format, cluster mode, the SDN zone, and the
+        reserved range number). Never rewrites C(database_encryption_key); the
+        host network keys are reconciled only on explicit opt-in. Stages the ROOT
+        API key into the house credential store and verifies the result. A
+        second run reports C(changed=0).
+      - >-
+        The managed-key manifest in C(vars/main.yml)
+        (C(cluster_ludus_install_managed_keys), C(cluster_ludus_install_network_keys))
+        is role-internal data, not an input.
+    options:
+      cluster_ludus_install_root:
+        type: str
+        required: false
+        default: "/opt/ludus"
+        description: "The Ludus install root (where config.yml and install/root-api-key live)."
+      cluster_ludus_install_run_installer:
+        type: bool
+        required: false
+        default: false
+        description:
+          - >-
+            When true AND no install is found, download and run the official
+            C(ludus-server) binary non-interactively (C(--no-prompt)) to perform a
+            first install.
+          - >-
+            Default false: the role asserts an install is present and only
+            reconciles it. On a fresh Debian host the installer may reboot — run it
+            attended.
+      cluster_ludus_install_binary_url:
+        type: str
+        required: false
+        default: ""
+        description: "URL of the C(ludus-server) binary to download when O(cluster_ludus_install_run_installer) is true (required in that case)."
+      cluster_ludus_install_binary_checksum:
+        type: str
+        required: false
+        default: ""
+        description: "Optional C(algo:hex) checksum for the downloaded binary (passed to C(get_url))."
+      cluster_ludus_install_version:
+        type: str
+        required: false
+        default: ""
+        description: "Expected Ludus server version string; when set, the role asserts C(ludus version) reports it."
+      cluster_ludus_install_vm_storage_pool:
+        type: str
+        required: false
+        default: "{{ ceph_pool }}"
+        description: "C(proxmox_vm_storage_pool) to enforce — the cluster-shared pool VMs are cloned onto (the inventory's ceph_pool)."
+      cluster_ludus_install_vm_storage_format:
+        type: str
+        required: false
+        default: "raw"
+        description: "C(proxmox_vm_storage_format) to enforce — Ceph RBD and ZFS require C(raw), not qcow2."
+      cluster_ludus_install_iso_storage_pool:
+        type: str
+        required: false
+        default: "local"
+        description: "C(proxmox_iso_storage_pool) to enforce (RBD cannot hold ISOs; keep a node-local/shared store)."
+      cluster_ludus_install_reserved_range_numbers:
+        type: list
+        elements: int
+        required: false
+        default: "{{ ludus_reserved_range_numbers }}"
+        description: >-
+          C(reserved_range_numbers) to enforce — numbers whose 10.N.0.0/16 would
+          collide with the cluster's own nets (the inventory's ludus_reserved_range_numbers).
+      cluster_ludus_install_cluster_mode:
+        type: bool
+        required: false
+        default: true
+        description: "C(cluster_mode) to enforce (this is a multi-node Proxmox cluster)."
+      cluster_ludus_install_sdn_zone:
+        type: str
+        required: false
+        default: "{{ sdn_zone }}"
+        description: "C(sdn_zone) to enforce — the VXLAN zone Ludus uses for the ludusnat and per-range VNets in cluster mode (the inventory's sdn_zone)."
+      cluster_ludus_install_vxlan_tag_base:
+        type: int
+        required: false
+        default: 0
+        description: "C(vxlan_tag_base) to enforce (each range VNet tag = base + range number)."
+      cluster_ludus_install_proxmox_node:
+        type: str
+        required: false
+        default: "{{ inventory_hostname }}"
+        description: "C(proxmox_node) to enforce — the Proxmox node name of this Ludus host."
+      cluster_ludus_install_manage_network:
+        type: bool
+        required: false
+        default: false
+        description: >-
+          When true, also reconcile the host network keys below. Default false so
+          the working (Ceph-mesh) network is never restyled by a wrong guess.
+      cluster_ludus_install_net_interface:
+        type: str
+        required: false
+        default: ""
+        description: "C(proxmox_interface) to enforce (only when O(cluster_ludus_install_manage_network))."
+      cluster_ludus_install_net_local_ip:
+        type: str
+        required: false
+        default: ""
+        description: "C(proxmox_local_ip) to enforce (only when O(cluster_ludus_install_manage_network))."
+      cluster_ludus_install_net_gateway:
+        type: str
+        required: false
+        default: ""
+        description: "C(proxmox_gateway) to enforce (only when O(cluster_ludus_install_manage_network))."
+      cluster_ludus_install_net_netmask:
+        type: str
+        required: false
+        default: ""
+        description: "C(proxmox_netmask) to enforce (only when O(cluster_ludus_install_manage_network))."
+      cluster_ludus_install_stage_root_key:
+        type: bool
+        required: false
+        default: true
+        description: "Stage install/root-api-key into the house credential store so cluster_secrets' primary path resolves the ROOT key."
+      cluster_ludus_install_vault_dir:
+        type: str
+        required: false
+        default: "/root/ludus-credentials"
+        description: "The house credential store directory the ROOT key is staged into (as ROOT.apikey)."
+      cluster_ludus_install_verify_whoami:
+        type: bool
+        required: false
+        default: false
+        description: "Prove an exported LUDUS_API_KEY authenticates at /whoami after reconcile. Needs the key in the environment."
+      cluster_ludus_install_api_url:
+        type: str
+        required: false
+        default: "https://127.0.0.1:8080/api/v2"
+        description: "Ludus user API base URL for the optional /whoami check."
+      cluster_ludus_install_validate_certs:
+        type: bool
+        required: false
+        default: false
+        description: "Validate the Ludus self-signed TLS certificate for the /whoami check."

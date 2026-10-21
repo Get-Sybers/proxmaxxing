@@ -1,0 +1,29 @@
+---
+- name: "dek-capture-one | Open this ciphertext under the CURRENT key"
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ __dek_helper }}"
+  args:
+    stdin: "{{ {'op': 'decrypt', 'key': __dek_old_key, 'data': item.ct} | to_json }}"
+    stdin_add_newline: false
+  register: __dek_cap
+  no_log: true
+  check_mode: false
+  changed_when: false
+- name: "dek-capture-one | Record the plaintext fingerprint (never the plaintext)"
+  ansible.builtin.set_fact:
+    __dek_capture: >-
+      {{ __dek_capture | default([]) + [{
+           'userID': item.userID,
+           'id': item.id,
+           'field': item.field,
+           'ct': item.ct,
+           'sha': (__dek_cap.stdout | hash('sha256'))
+         }] }}
+  no_log: true
+- name: "dek-capture-one | Report SHAPE only"
+  ansible.builtin.debug:
+    msg: >-
+      Captured {{ item.userID }}.{{ item.field }}: ciphertext
+      ({{ item.ct | length }} b64 chars) opened cleanly under the CURRENT key.

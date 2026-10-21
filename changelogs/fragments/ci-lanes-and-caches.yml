@@ -1,0 +1,9 @@
+---
+trivial:
+  - >-
+    CI runs only the lanes a change needs: ``scripts/molecule_lanes.py`` reads
+    the pull request's diff and selects the molecule scenarios whose roles (or
+    shared files) changed, fanned out over parallel lanes; docs-only changes
+    skip the collection gate. The Galaxy collections, prek's hook environments
+    and ansible-test's venvs are cached on the files that pin them, and
+    ansible-lint runs once instead of twice.

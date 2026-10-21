@@ -1,0 +1,13 @@
+-D
+-b {{ audit_backlog_limit }}
+--backlog_wait_time 0
+-f 1
+-r 0
+{% for w in audit_watches_present %}
+-a always,exit -F {{ 'dir' if w.kind == 'dir' else 'path' }}={{ w.path }} -F perm={{ w.perm }} -F key={{ w.key }}
+{% endfor %}
+-a always,exit -F arch=b64 -S execve -C uid!=euid -F euid=0 -F key=privesc
+-a always,exit -F arch=b32 -S execve -C uid!=euid -F euid=0 -F key=privesc
+-a always,exit -F arch=b64 -S init_module,finit_module,delete_module -F key=modules
+-a always,exit -F arch=b32 -S init_module,finit_module,delete_module -F key=modules
+-e 1

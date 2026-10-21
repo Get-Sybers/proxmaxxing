@@ -1,0 +1,8 @@
+---
+# Rolling node upgrade (cluster-node-upgrade.yml).
+# Reboot a remote node into its new kernel once upgraded.
+node_upgrade_reboot: true
+# Also full-upgrade the master (never rebooted by the play; see its report).
+node_upgrade_include_ludus_server: false
+# qemu-server must reach this version for the machine types the ranges use.
+node_upgrade_qemu_min_version: "9.2.0"

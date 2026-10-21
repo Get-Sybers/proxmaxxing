@@ -1,0 +1,474 @@
+---
+- name: "SDN zone, VNets and ACLs (cluster-wide; run once from the Ludus node)"
+  hosts: proxmox_master
+  gather_facts: false
+  tasks:
+    - name: "Fact-find: the SDN zone as it is now (peers is what this play overwrites)"
+      ansible.builtin.command: "pvesh get /cluster/sdn/zones/{{ sdn_zone }} --output-format=json"
+      register: __zone_prior_raw
+      changed_when: false
+      check_mode: false
+    - name: "Fact-find: every VNet that exists now"
+      ansible.builtin.command: pvesh get /cluster/sdn/vnets --output-format=json
+      register: __vnets_raw
+      changed_when: false
+      check_mode: false
+    - name: "Fact-find: the whole ACL table"
+      ansible.builtin.command: pvesh get /access/acl --output-format=json
+      register: __acl_prior_raw
+      changed_when: false
+      check_mode: false
+    - name: "Fact-find: index the captured prior state"
+      ansible.builtin.set_fact:
+        __prior_zone_peers: "{{ (__zone_prior_raw.stdout | from_json).peers | default('') }}"
+        __existing_vnets: "{{ (__vnets_raw.stdout | default('[]') | from_json) | map(attribute='vnet') | list }}"
+        __prior_acls: >-
+          {{ (__acl_prior_raw.stdout | default('[]') | from_json)
+             | map(attribute='path') | zip((__acl_prior_raw.stdout | default('[]') | from_json) | map(attribute='ugid'),
+                                           (__acl_prior_raw.stdout | default('[]') | from_json) | map(attribute='roleid'))
+             | map('join', '|') | list }}
+        __wanted_acls: >-
+          {{ (([sdn_nat_vnet] + (sdn_range_vnets | map(attribute='number') | map('regex_replace', '^', 'r') | list))
+              | map('regex_replace', '^', '/sdn/zones/' ~ sdn_zone ~ '/') | list
+              | product(['ludus_users|PVESDNUser']) | map('join', '|') | list)
+             + (groups['proxmox_cluster'] | map('regex_replace', '^', '/nodes/') | list
+                | product(['ludus_users|AccessNetwork', 'ludus_users|ResourceAudit']) | map('join', '|') | list)
+             + (([sdn_vm_storage_pool, sdn_iso_storage_pool] | unique) | map('regex_replace', '^', '/storage/') | list
+                | product(['ludus_users|DatastoreUser', 'ludus_admins|PVEDatastoreAdmin']) | map('join', '|') | list) }}
+    - name: "Fact-find: report the prior state a rescue would put back"
+      ansible.builtin.debug:
+        msg: |-
+          SDN zone {{ sdn_zone }} peers, as found: {{ __prior_zone_peers | default('(unset)', true) }}
+                                    to be set to: {{ cluster_peers }}
+          VNets that already exist: {{ __existing_vnets | join(', ') or '(none)' }}
+          VNets this run would CREATE (and the rescue would delete again):
+            {{ ([sdn_nat_vnet] + (sdn_range_vnets | map(attribute='number') | map('regex_replace', '^', 'r') | list))
+               | reject('in', __existing_vnets) | list | join(', ') or '(none)' }}
+          ACL grants this play asserts: {{ __wanted_acls | length }};
+            already present (left alone on rollback):
+            {{ __wanted_acls | select('in', __prior_acls) | list | length }}
+            would be CREATED (and revoked again on rollback):
+            {{ __wanted_acls | reject('in', __prior_acls) | list }}
+    - name: "Preflight: every prior value needed for a rollback was captured"
+      ansible.builtin.assert:
+        that:
+          - __zone_prior_raw.rc == 0
+          - __vnets_raw.rc == 0
+          - __acl_prior_raw.rc == 0
+        success_msg: >-
+          Prior state captured: zone peers='{{ __prior_zone_peers }}',
+          {{ __existing_vnets | length }} VNets, {{ __prior_acls | length }} ACL entries.
+        fail_msg: >-
+          Refusing to change the SDN: the prior state could not be read, so nothing could be
+          put back on failure. zone rc={{ __zone_prior_raw.rc | default('?') }},
+          vnets rc={{ __vnets_raw.rc | default('?') }}, acl rc={{ __acl_prior_raw.rc | default('?') }}.
+    - name: "Assert the SDN state, prove it took, and put the prior state back if it did not"
+      block:
+        - name: "Ensure the VXLAN zone lists every cluster peer (including itself)"
+          ansible.builtin.command:
+            argv: [pvesh, set, "/cluster/sdn/zones/{{ sdn_zone }}", --peers, "{{ cluster_peers }}"]
+          register: __zone
+          changed_when: __zone.rc == 0 and __prior_zone_peers != cluster_peers
+          failed_when: __zone.rc != 0
+        - name: "Create the NAT VNet"
+          ansible.builtin.command:
+            argv:
+              - pvesh
+              - create
+              - /cluster/sdn/vnets
+              - --zone
+              - "{{ sdn_zone }}"
+              - --vnet
+              - "{{ sdn_nat_vnet }}"
+              - --tag
+              - "{{ sdn_nat_vnet_tag }}"
+              - --vlanaware
+              - "1"
+          when: sdn_nat_vnet not in __existing_vnets
+          register: __nat_vnet
+          changed_when: true
+        - name: "Create range VNets"
+          ansible.builtin.command:
+            argv:
+              - pvesh
+              - create
+              - /cluster/sdn/vnets
+              - --zone
+              - "{{ sdn_zone }}"
+              - --vnet
+              - "r{{ item.number }}"
+              - --tag
+              - "{{ sdn_vxlan_tag_base + item.number }}"
+              - --vlanaware
+              - "1"
+          loop: "{{ sdn_range_vnets }}"
+          when: "'r' ~ item.number not in __existing_vnets"
+          register: __range_vnets
+          changed_when: true
+        - name: "Apply pending SDN config cluster-wide"
+          ansible.builtin.command: pvesh set /cluster/sdn
+          when: __nat_vnet is changed or __range_vnets is changed or __zone is changed
+          register: __sdn_apply
+          changed_when: true
+        - name: "Fail if the SDN apply warned about a missing source directive"
+          ansible.builtin.assert:
+            that: "'missing' not in (__sdn_apply.stderr | default(''))"
+            fail_msg: >-
+              pvesh set /cluster/sdn warned about a missing
+              'source /etc/network/interfaces.d/*' directive. Fix that first: add
+              that line to /etc/network/interfaces on every node that lacks it
+              (the SDN-SOURCE patch in cluster_patch_ludus does this for nodes
+              built by the Ludus installer), then re-run this playbook. Without it
+              the VNets are never brought up and dnsmasq stays dead.
+          when: __sdn_apply is not skipped
+        - name: "Grant every ACL this cluster needs (path|group|role)"
+          ansible.builtin.command:
+            argv: [pveum, aclmod, "{{ item.split('|')[0] }}",
+                   -group, "{{ item.split('|')[1] }}", -role, "{{ item.split('|')[2] }}"]
+          loop: "{{ __wanted_acls }}"
+          loop_control: { label: "{{ item }}" }
+          changed_when: item not in __prior_acls
+        - name: "Post-check: re-read the zone, the VNets and the ACL table"
+          ansible.builtin.command: "{{ item }}"
+          loop:
+            - "pvesh get /cluster/sdn/zones/{{ sdn_zone }} --output-format=json"
+            - "pvesh get /cluster/sdn/vnets --output-format=json"
+            - "pvesh get /access/acl --output-format=json"
+          register: __sdn_after
+          changed_when: false
+          check_mode: false
+        - name: "Post-check: index what PVE now reports"
+          ansible.builtin.set_fact:
+            __after_zone_peers: "{{ (__sdn_after.results[0].stdout | from_json).peers | default('') }}"
+            __after_vnets: "{{ (__sdn_after.results[1].stdout | from_json) | map(attribute='vnet') | list }}"
+            __after_acls: >-
+              {{ (__sdn_after.results[2].stdout | from_json)
+                 | map(attribute='path') | zip((__sdn_after.results[2].stdout | from_json) | map(attribute='ugid'),
+                                               (__sdn_after.results[2].stdout | from_json) | map(attribute='roleid'))
+                 | map('join', '|') | list }}
+        - name: "POST-CHECK: PVE reports the zone, VNets and ACLs this play asserted"
+          ansible.builtin.assert:
+            that:
+              - __after_zone_peers == cluster_peers
+              - ([sdn_nat_vnet] + (sdn_range_vnets | map(attribute='number') | map('regex_replace', '^', 'r') | list))
+                | reject('in', __after_vnets) | list | length == 0
+              - __wanted_acls | reject('in', __after_acls) | list | length == 0
+            success_msg: >-
+              Verified from PVE: zone peers={{ __after_zone_peers }},
+              VNets present={{ __after_vnets | join(', ') }},
+              all {{ __wanted_acls | length }} ACL grants in place.
+            fail_msg: >-
+              PVE does NOT report the SDN state this play asserted.
+              zone peers={{ __after_zone_peers }} (want {{ cluster_peers }});
+              missing VNets={{ ([sdn_nat_vnet] + (sdn_range_vnets | map(attribute='number')
+              | map('regex_replace', '^', 'r') | list)) | reject('in', __after_vnets)
+              | list }};
+              missing ACLs={{ __wanted_acls | reject('in', __after_acls) | list }}.
+      rescue:
+        - name: "Rescue: restore the zone's captured peers list"
+          ansible.builtin.command:
+            argv: [pvesh, set, "/cluster/sdn/zones/{{ sdn_zone }}", --peers, "{{ __prior_zone_peers }}"]
+          when: __prior_zone_peers | length > 0
+          register: __sdn_restore_zone
+          changed_when: true
+          failed_when: false
+        - name: "Rescue: delete ONLY the VNets this run created"
+          ansible.builtin.command:
+            argv: [pvesh, delete, "/cluster/sdn/vnets/{{ item }}"]
+          loop: "{{ ([sdn_nat_vnet] + (sdn_range_vnets | map(attribute='number') | map('regex_replace', '^', 'r') | list))
+                    | reject('in', __existing_vnets) | list }}"
+          loop_control: { label: "{{ item }} <- back to ABSENT" }
+          register: __sdn_restore_vnets
+          changed_when: true
+          failed_when: false
+        - name: "Rescue: revoke ONLY the ACL grants this run created"
+          ansible.builtin.command:
+            argv: [pveum, aclmod, "{{ item.split('|')[0] }}",
+                   -group, "{{ item.split('|')[1] }}", -role, "{{ item.split('|')[2] }}", -delete, "1"]
+          loop: "{{ __wanted_acls | reject('in', __prior_acls) | list }}"
+          loop_control: { label: "{{ item }} <- back to REVOKED" }
+          register: __sdn_restore_acls
+          changed_when: true
+          failed_when: false
+        - name: "Rescue: re-apply the restored SDN definitions cluster-wide"
+          ansible.builtin.command: pvesh set /cluster/sdn
+          register: __sdn_restore_apply
+          changed_when: true
+          failed_when: false
+        - name: "Rescue verify: re-read the zone, the VNets and the ACL table"
+          ansible.builtin.command: "{{ item }}"
+          loop:
+            - "pvesh get /cluster/sdn/zones/{{ sdn_zone }} --output-format=json"
+            - "pvesh get /cluster/sdn/vnets --output-format=json"
+            - "pvesh get /access/acl --output-format=json"
+          register: __sdn_restore_read
+          changed_when: false
+          failed_when: false
+        - name: "Rescue verify: compare what came back against what was captured"
+          ansible.builtin.set_fact:
+            __restore_reads_ok: "{{ __sdn_restore_read.results | selectattr('rc', 'equalto', 0) | list | length == 3 }}"
+            __restored_peers: "{{ (__sdn_restore_read.results[0].stdout | default('{}') | from_json).peers | default('') }}"
+            __restored_vnets: "{{ (__sdn_restore_read.results[1].stdout | default('[]') | from_json) | map(attribute='vnet') | list }}"
+            __restored_acls: >-
+              {{ (__sdn_restore_read.results[2].stdout | default('[]') | from_json)
+                 | map(attribute='path') | zip((__sdn_restore_read.results[2].stdout | default('[]') | from_json) | map(attribute='ugid'),
+                                               (__sdn_restore_read.results[2].stdout | default('[]') | from_json) | map(attribute='roleid'))
+                 | map('join', '|') | list }}
+        - name: "Rescue verify: the rollback verdict"
+          ansible.builtin.set_fact:
+            __sdn_leftover_vnets: "{{ __restored_vnets | reject('in', __existing_vnets) | list }}"
+            __sdn_leftover_acls: "{{ __wanted_acls | reject('in', __prior_acls) | select('in', __restored_acls) | list }}"
+            __sdn_lost_acls: "{{ __prior_acls | reject('in', __restored_acls) | list }}"
+        - name: "Rescue verify: did everything come back?"
+          ansible.builtin.set_fact:
+            __sdn_verdict: >-
+              {{ __restore_reads_ok | bool
+                 and __restored_peers == __prior_zone_peers
+                 and __sdn_leftover_vnets | length == 0
+                 and __sdn_leftover_acls | length == 0
+                 and __sdn_lost_acls | length == 0 }}
+        - name: "Rescue: fail reporting the original error AND the rollback verdict"
+          ansible.builtin.fail:
+            msg: |-
+              SDN STATE CHANGE FAILED{{ ' AND WAS ROLLED BACK' if __sdn_verdict | bool else ' — ROLLBACK INCOMPLETE' }}.
+              (1) ORIGINAL FAILURE — task '{{ ansible_failed_task.name | default('unknown') }}':
+                  {{ ansible_failed_result.msg | default(ansible_failed_result) | default('(no result captured)') }}
+              (2) ROLLBACK: {{ "VERIFIED — the zone peers, the VNet list and the ACL table were re-read from PVE and match the capture."
+                               if __sdn_verdict | bool else
+                               "NOT VERIFIED — PVE does NOT match the captured prior state, so the SDN is in an
+                                UNKNOWN configuration and needs manual inspection." }}
+                  verify reads ok: {{ __restore_reads_ok }}
+                  {{ 'OK  ' if __restored_peers == __prior_zone_peers else 'FAIL' }} zone peers: captured={{ __prior_zone_peers }} now={{ __restored_peers }}
+                  {{ 'OK  ' if __sdn_leftover_vnets | length == 0 else 'FAIL' }} VNets created by this run and still present: {{ __sdn_leftover_vnets }}
+                  {{ 'OK  ' if __sdn_leftover_acls | length == 0 else 'FAIL' }} ACLs created by this run and still granted: {{ __sdn_leftover_acls }}
+                  {{ 'OK  ' if __sdn_lost_acls | length == 0 else 'FAIL' }} pre-existing ACLs LOST by the rollback: {{ __sdn_lost_acls }}
+                  restore rcs: zone={{ __sdn_restore_zone.rc | default('skipped') }},
+                               vnets={{ __sdn_restore_vnets.results | default([]) | selectattr('rc', 'defined') | map(attribute='rc') | list }},
+                               acls={{ __sdn_restore_acls.results | default([]) | selectattr('rc', 'defined') | map(attribute='rc') | list }},
+                               apply={{ __sdn_restore_apply.rc | default('?') }}
+              (3) NOT ROLLED BACK, DELIBERATELY (see the play header):
+                  - VNets and ACL grants that already existed before this run.
+                  - the blast radius of `pvesh set /cluster/sdn`, which regenerates
+                    /etc/network/interfaces.d/sdn on EVERY node. This play rescues the master's
+                    definitions and re-applies them; a node that lost its management link
+                    during the apply needs console access, not another Ansible run.
+- name: "Host NAT interface, range routes and dnsmasq (Ludus node only)"
+  hosts: proxmox_master
+  gather_facts: true
+  tasks:
+    - name: "Fact-find: capture the bytes of every file this play edits"
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        checksum_algorithm: sha256
+      loop: "{{ sdn_managed_files }}"
+      register: __sdnf_stat
+      check_mode: false
+    - name: "Fact-find: slurp the ones that exist"
+      ansible.builtin.slurp:
+        src: "{{ item.item }}"
+      loop: "{{ __sdnf_stat.results }}"
+      loop_control: { label: "{{ item.item }}" }
+      when: item.stat.exists
+      register: __sdnf_slurp
+      check_mode: false
+    - name: "Fact-find: the current state of dnsmasq"
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          printf '%s|%s' \
+            "$(systemctl is-enabled dnsmasq 2>/dev/null || echo unknown)" \
+            "$(systemctl is-active  dnsmasq 2>/dev/null || echo unknown)"
+        executable: /bin/bash
+      register: __dnsmasq_prior
+      changed_when: false
+      check_mode: false
+      failed_when: false
+    - name: "Fact-find: index the captured file state per file"
+      ansible.builtin.set_fact:
+        __prior_sdn_files: >-
+          {{ __prior_sdn_files | default({}) | combine({ item.0.item: {
+               'existed': item.0.stat.exists,
+               'mode': item.0.stat.mode | default('0644'),
+               'owner': item.0.stat.pw_name | default('root'),
+               'group': item.0.stat.gr_name | default('root'),
+               'sha256': item.0.stat.checksum | default(''),
+               'b64': item.1.content | default(''),
+               'captured': item.1.content is defined } }) }}
+      loop: "{{ __sdnf_stat.results | zip(__sdnf_slurp.results) | list }}"
+      loop_control: { label: "{{ item.0.item }}" }
+    - name: "Fact-find: report the prior state a rescue would put back"
+      ansible.builtin.debug:
+        msg: |-
+          files (restored byte-for-byte):
+          {% for n, f in __prior_sdn_files.items() %}
+            {{ n }}: {{ ('present, ' ~ f.mode ~ ', sha256 ' ~ f.sha256[:12] ~ '…') if f.existed else 'ABSENT (rescue would delete it again)' }}
+          {% endfor %}
+          dnsmasq: {{ __dnsmasq_prior.stdout | default('?|?') }} (enabled|active)
+    - name: "Preflight: every prior value needed for a rollback was captured"
+      ansible.builtin.assert:
+        that:
+          - __prior_sdn_files | length == sdn_managed_files | length
+          - __prior_sdn_files.values() | selectattr('existed') | rejectattr('captured') | list | length == 0
+        success_msg: "Prior state captured for {{ __prior_sdn_files | length }} files plus the dnsmasq unit state."
+        fail_msg: >-
+          Refusing to edit the host NAT/dnsmasq configuration: the prior bytes could not be
+          read, so they could not be put back on failure.
+    - name: "Configure the NAT interface and dnsmasq, prove dnsmasq survives, and restore if not"
+      block:
+        - name: "Ensure /etc/network/interfaces sources the SDN directory"
+          ansible.builtin.lineinfile:
+            path: /etc/network/interfaces
+            line: "source /etc/network/interfaces.d/*"
+            state: present
+            insertafter: EOF
+          register: __source_line
+        # yamllint disable rule:line-length
+        - name: "Ensure the ludusnat stanza (address, NAT, and range routes)"
+          ansible.builtin.blockinfile:
+            path: /etc/network/interfaces
+            marker: "# LUDUS SDN NAT INTERFACE {mark}"
+            insertbefore: "^source /etc/network/interfaces.d/"
+            block: |
+              iface {{ sdn_nat_vnet }}
+                  address {{ sdn_nat_address }}
+                  netmask 255.255.255.0
+                  post-up   echo 1 > /proc/sys/net/ipv4/ip_forward
+                  post-up   iptables -t nat -C POSTROUTING -s '{{ sdn_nat_address }}/24' -o {{ sdn_nat_interface }} -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s '{{ sdn_nat_address }}/24' -o {{ sdn_nat_interface }} -j MASQUERADE
+                  post-down iptables -t nat -D POSTROUTING -s '{{ sdn_nat_address }}/24' -o {{ sdn_nat_interface }} -j MASQUERADE
+                  post-up   iptables -C FORWARD -s '{{ sdn_nat_address }}/24' -d {{ cluster_lan_cidr }} -j DROP 2>/dev/null || iptables -I FORWARD 1 -s '{{ sdn_nat_address }}/24' -d {{ cluster_lan_cidr }} -j DROP
+                  post-down iptables -D FORWARD -s '{{ sdn_nat_address }}/24' -d {{ cluster_lan_cidr }} -j DROP
+              {% for r in sdn_range_routes %}
+                  post-up   ip route add 10.{{ r.second_octet }}.0.0/16 via {{ sdn_nat_address.rsplit('.', 1)[0] }}.{{ 100 + r.second_octet }} dev {{ sdn_nat_vnet }} || true
+                  post-down ip route del 10.{{ r.second_octet }}.0.0/16 via {{ sdn_nat_address.rsplit('.', 1)[0] }}.{{ 100 + r.second_octet }} || true
+              {% endfor %}
+          register: __nat_stanza
+        # yamllint enable rule:line-length
+        - name: "Validate the interfaces file parses before anything reloads it"
+          ansible.builtin.command: ifquery -a -c
+          register: __ifquery
+          changed_when: false
+          failed_when: __ifquery.rc not in [0, 1]
+        - name: "Point dnsmasq at the NAT VNet instead of the old bridge"
+          ansible.builtin.replace:
+            path: "/etc/dnsmasq.d/dnsmasq-{{ sdn_nat_interface }}.conf"
+            regexp: '\b{{ sdn_legacy_bridge }}\b'
+            replace: "{{ sdn_nat_vnet }}"
+          register: __dnsmasq_conf
+        # restart must run inline here, before the POST-CHECK that asserts it is active; not deferrable to a handler.
+        - name: "Restart dnsmasq"  # noqa: no-handler
+          ansible.builtin.systemd:
+            name: dnsmasq
+            state: restarted
+          when: __dnsmasq_conf is changed
+        # liveness probe: systemctl is-active is a read-only status query, changed_when:false.
+        - name: "POST-CHECK: dnsmasq must be active (bind-interfaces makes this fatal)"  # noqa: command-instead-of-module
+          ansible.builtin.command: systemctl is-active dnsmasq
+          register: __dnsmasq_state
+          changed_when: false
+          failed_when: __dnsmasq_state.stdout | trim != "active"
+        - name: "POST-CHECK: the interfaces file still parses"
+          ansible.builtin.command: ifquery -a -c
+          register: __ifquery_after
+          changed_when: false
+          failed_when: __ifquery_after.rc not in [0, 1]
+        - name: "Assert the range routes are actually present"
+          ansible.builtin.shell:
+            cmd: "set -o pipefail; ip route show | grep -q '^10.{{ item.second_octet }}.0.0/16 .* dev {{ sdn_nat_vnet }}'"
+            executable: /bin/bash
+          loop: "{{ sdn_range_routes }}"
+          register: __routes
+          changed_when: false
+          failed_when: false
+        - name: "Report any missing range routes"
+          ansible.builtin.debug:
+            msg: >-
+              Range route 10.{{ item.item.second_octet }}.0.0/16 via {{ sdn_nat_vnet }}
+              is {{ 'PRESENT' if item.rc == 0 else 'MISSING — bring the interface up, or ifup ' ~ sdn_nat_vnet }}
+          loop: "{{ __routes.results }}"
+          loop_control: { label: "10.{{ item.item.second_octet }}.0.0/16" }
+      rescue:
+        - name: "Rescue: restore the bytes of every edited file"
+          ansible.builtin.copy:
+            content: "{{ item.value.b64 | b64decode }}"
+            dest: "{{ item.key }}"
+            owner: "{{ item.value.owner }}"
+            group: "{{ item.value.group }}"
+            mode: "{{ item.value.mode }}"
+          loop: "{{ __prior_sdn_files | dict2items | selectattr('value.existed') | list }}"
+          loop_control: { label: "{{ item.key }} <- {{ item.value.sha256[:12] }}…" }
+          register: __sdnf_restore
+          failed_when: false
+        - name: "Rescue: delete files that did NOT exist before this run"
+          ansible.builtin.file:
+            path: "{{ item.key }}"
+            state: absent
+          loop: "{{ __prior_sdn_files | dict2items | rejectattr('value.existed') | list }}"
+          loop_control: { label: "{{ item.key }} <- back to ABSENT" }
+          register: __sdnf_restore_absent
+          failed_when: false
+        - name: "Rescue: restart dnsmasq against the restored config"
+          ansible.builtin.systemd:
+            name: dnsmasq
+            state: restarted
+          register: __dnsmasq_restore
+          failed_when: false
+        - name: "Rescue verify: re-stat every edited file"
+          ansible.builtin.stat:
+            path: "{{ item.key }}"
+            checksum_algorithm: sha256
+          loop: "{{ __prior_sdn_files | dict2items }}"
+          loop_control: { label: "{{ item.key }}" }
+          register: __sdnf_restore_stat
+          check_mode: false
+          failed_when: false
+        - name: "Rescue verify: re-read the dnsmasq unit state"
+          ansible.builtin.shell:
+            cmd: |
+              set -o pipefail
+              printf '%s|%s' \
+                "$(systemctl is-enabled dnsmasq 2>/dev/null || echo unknown)" \
+                "$(systemctl is-active  dnsmasq 2>/dev/null || echo unknown)"
+            executable: /bin/bash
+          register: __dnsmasq_after
+          changed_when: false
+          failed_when: false
+        - name: "Rescue verify: compare, file by file"
+          ansible.builtin.set_fact:
+            __sdnf_verdicts: >-
+              {{ __sdnf_verdicts | default([]) + [{
+                   'file': item.item.key,
+                   'was': ('sha256 ' ~ item.item.value.sha256[:12] ~ '…') if item.item.value.existed else 'ABSENT',
+                   'now': ('sha256 ' ~ (item.stat.checksum | default('?'))[:12] ~ '…') if item.stat.exists | default(false) else 'ABSENT',
+                   'ok': (item.stat.exists | default(false)) == item.item.value.existed
+                         and ((item.stat.checksum | default('')) == item.item.value.sha256
+                              if item.item.value.existed else true) }] }}
+          loop: "{{ __sdnf_restore_stat.results }}"
+          loop_control: { label: "{{ item.item.key }}" }
+        - name: "Rescue verify: the rollback verdict"
+          ansible.builtin.set_fact:
+            __sdnf_verdict: >-
+              {{ (__sdnf_verdicts | rejectattr('ok') | list | length) == 0
+                 and (__dnsmasq_after.stdout | default('')) == (__dnsmasq_prior.stdout | default('!')) }}
+        # yamllint disable rule:line-length
+        - name: "Rescue: fail reporting the original error AND the rollback verdict"
+          ansible.builtin.fail:
+            msg: |-
+              HOST NAT / dnsmasq CHANGE FAILED{{ ' AND WAS ROLLED BACK' if __sdnf_verdict | bool else ' — ROLLBACK INCOMPLETE' }}.
+              (1) ORIGINAL FAILURE — task '{{ ansible_failed_task.name | default('unknown') }}':
+                  {{ ansible_failed_result.msg | default(ansible_failed_result) | default('(no result captured)') }}
+              (2) ROLLBACK: {{ "VERIFIED — both files were re-read and match the capture, and dnsmasq is back in its captured state."
+                               if __sdnf_verdict | bool else
+                               "NOT VERIFIED — at least one item does NOT match what was captured, so the host NAT/dnsmasq
+                                configuration is in an UNKNOWN state and needs manual inspection." }}
+              {% for v in __sdnf_verdicts %}
+                  {{ 'OK  ' if v.ok else 'FAIL' }} {{ v.file }}: captured={{ v.was }} now={{ v.now }}
+              {% endfor %}
+                  {{ 'OK  ' if (__dnsmasq_after.stdout | default('')) == (__dnsmasq_prior.stdout | default('!')) else 'FAIL' }} dnsmasq: captured={{ __dnsmasq_prior.stdout | default('?') }} now={{ __dnsmasq_after.stdout | default('?') }}
+                  dnsmasq restart against the restored config: {{ 'ok' if not (__dnsmasq_restore.failed | default(true)) else 'FAILED — dnsmasq will not start on the RESTORED config; this needs a human' }}
+              (3) NOT ROLLED BACK, DELIBERATELY:
+                  - the dnsmasq process itself: there is no previous process to restore, so the
+                    service is restarted against the restored config and the result reported.
+                  - nothing else: this play never runs `ifreload`, so the interfaces-file edits
+                    are inert until something reloads networking. Restoring the bytes IS the
+                    complete rollback of those tasks.
+        # yamllint enable rule:line-length
