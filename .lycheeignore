@@ -2,3 +2,9 @@
 # Keep this short and explain every entry; an ignored link is a link nobody checks.
 # Example: a vendor portal that blocks bots
 # ^https://portal\.example-vendor\.com/
+# Placeholders the site template carries for the operator to replace.
+^https?://github\.com/CHANGE-ME/
+# RFC 5737 documentation addresses standing in for site values in the examples.
+^https?://192\.0\.2\.
+^https?://198\.51\.100\.
+^https?://203\.0\.113\.

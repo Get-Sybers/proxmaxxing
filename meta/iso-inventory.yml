@@ -78,7 +78,7 @@ iso_inventory:
     iso_sha1: e23f5fd81bd1ddb6d9995f38ce70a72a79cc0d7f
     iso_sha512: a7ba67dd741c5ff315a9b227c8e8a3e4f69afdb344cd8cc0f2cca32006b8c069664c9c7bf91ebf0719a64ced1c425bffa534263f170595962675633ae21133d8
     iso_md5: d1d0061c959f0588a008e3dc762c5bc0
-    source_url: https://cdimage.kali.org/kali-2026.1/kali-linux-2026.1-installer-netinst-amd64.iso
+    source_url: https://old.kali.org/kali-images/kali-2026.1/kali-linux-2026.1-installer-netinst-amd64.iso
     derived_from: null
     size_bytes: 746586112
     os: linux
@@ -180,9 +180,10 @@ iso_inventory:
     source_url: null
     source_url_note: >-
       the SUPERSEDED respin of Rocky-8.10-x86_64-minimal.iso. Rocky rebuilt that
-      file IN PLACE at https://download.rockylinux.org/pub/rocky/8.10/isos/x86_6
-      4/Rocky-8.10-x86_64-minimal.iso, and that URL now serves
-      sha256:231d21db... — the other 8.10 entry in this manifest. This older
+      file IN PLACE at
+      https://download.rockylinux.org/pub/rocky/8.10/isos/x86_64/Rocky-8.10-x86_64-minimal.iso,
+      and that URL now serves sha256:231d21db... — the other 8.10 entry in this
+      manifest. This older
       build is in no vault and on no mirror. source_url is deliberately null:
       the URL still resolves, but fetching it yields DIFFERENT BYTES, so
       recording it would hand automation a guaranteed checksum mismatch.
