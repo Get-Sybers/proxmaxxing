@@ -6,6 +6,9 @@ profile: production
 strict: true # warnings fail the gate too
 offline: false # install requirements.yml collections before linting
 exclude_paths:
+  # ansible-lint installs the pinned requirements.yml collections into this
+  # project-local cache (offline: false); they are dependencies, not content.
+  - .ansible/
   - .cache/
   - .github/
   - .tox/
