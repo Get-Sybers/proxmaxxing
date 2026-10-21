@@ -1,0 +1,14 @@
+---
+cluster_ludus_auth_identity: RA
+cluster_ludus_auth_record: "{{ cluster_ludus_auth_identity }}.apikey"
+cluster_ludus_auth_api_url: "https://127.0.0.1:8080/api/v2"
+cluster_ludus_auth_config_path: /opt/ludus/config.yml
+cluster_ludus_auth_dek_public_default: "hZD6RwYxrcQ7CS4lRxjdKI7thWp3jg48"
+cluster_ludus_auth_pb_url: "https://127.0.0.1:8080"
+cluster_ludus_auth_pb_collection: gs_infra_credentials
+cluster_ludus_auth_helper: "{{ playbook_dir }}/files/pb-aesgcm.py"
+cluster_ludus_auth_cli_config_file: "{{ lookup('env', 'HOME') }}/.config/ludus/config.yml"
+cluster_ludus_auth_cli_url: "https://127.0.0.1:8080"
+cluster_ludus_auth_env_file: "{{ lookup('env', 'HOME') }}/.config/ludus/ludus.env"
+cluster_ludus_auth_staging_file: /root/.ludus-key-rotate-staging
+cluster_ludus_auth_mint_target: RA

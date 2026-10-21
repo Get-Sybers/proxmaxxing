@@ -1,0 +1,19 @@
+---
+# Desired fast-storage links this node brings up (consumed by
+# playbooks/cluster-storage-net.yml). Kept here, not inline in the play, so the
+# topology has one authoritative per-host home. The point-to-point /30s use
+# the RFC 5737 range 203.0.113.0/24; replace them with your link addresses.
+storage_links:
+  - iface: thunderbolt0
+    address: "203.0.113.1/30"
+    mtu: 65520
+    hotplug: true
+    module: thunderbolt_net
+    peer: "203.0.113.2"
+    role: "TB to pi-03"
+  - iface: nic1
+    address: "203.0.113.5/30"
+    mtu: 9000
+    hotplug: false
+    peer: "203.0.113.6"
+    role: "Cat6 to pi-02 (2.5G)"

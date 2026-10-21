@@ -1,0 +1,53 @@
+---
+- name: "ludus_root_key | ROOT key — is it in the vault?"
+  ansible.builtin.stat:
+    path: "{{ cluster_secrets_root_vault_path }}"
+  register: __isrk_vault
+- name: "ludus_root_key | ROOT key — read from the vault"
+  ansible.builtin.include_tasks: get.yml
+  vars:
+    cluster_secrets_backend: file
+    cluster_secrets_request:
+      name: ROOT.apikey
+      path: "{{ cluster_secrets_root_vault_path }}"
+      regex: "{{ cluster_secrets_root_regex }}"
+      required: true
+  when: __isrk_vault.stat.exists
+- name: "ludus_root_key | ROOT key — fall back to the unvaulted install path"
+  ansible.builtin.include_tasks: get.yml
+  vars:
+    cluster_secrets_backend: file
+    cluster_secrets_request:
+      name: ROOT.apikey
+      path: "{{ cluster_secrets_root_install_path }}"
+      regex: "{{ cluster_secrets_root_regex }}"
+      required: true
+  when: not __isrk_vault.stat.exists
+- name: "ludus_root_key | ROOT key — expose as cluster_secrets_ludus_root_api_key"
+  ansible.builtin.set_fact:
+    cluster_secrets_ludus_root_api_key: "{{ cluster_secrets_result.value }}"
+    cluster_secrets_ludus_root_api_key_source: "{{ 'vault' if __isrk_vault.stat.exists else 'install-path (UNENCRYPTED AT REST)' }}"
+  no_log: true
+- name: "ludus_root_key | ROOT key — the value must actually be a ROOT key"
+  ansible.builtin.assert:
+    that:
+      - cluster_secrets_ludus_root_api_key | length > 0
+      - cluster_secrets_ludus_root_api_key.startswith('ROOT.')
+    fail_msg: >-
+      The value read for the ROOT key does not look like a ROOT key
+      (expected a 'ROOT.' prefix, length={{ cluster_secrets_ludus_root_api_key | length }}).
+      Wrong file, or the label-stripping regex did not match.
+    quiet: true
+  no_log: true
+- name: "ludus_root_key | ROOT key — warn while it is still outside the vault"
+  ansible.builtin.debug:
+    msg: >-
+      ROOT API key read from {{ cluster_secrets_root_install_path }}, which is NOT
+      in the encrypted vault (Get-Sybers/ludus
+      superuser password. Adopt it into the vault.
+  when: not __isrk_vault.stat.exists
+- name: "ludus_root_key | ROOT key — report SHAPE only"
+  ansible.builtin.debug:
+    msg: >-
+      cluster_secrets_ludus_root_api_key set from {{ cluster_secrets_ludus_root_api_key_source }},
+      length={{ cluster_secrets_ludus_root_api_key | length }}.

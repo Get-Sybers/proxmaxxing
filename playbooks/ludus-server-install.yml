@@ -1,0 +1,21 @@
+---
+- name: "Install and reconcile the Ludus server for this cluster (run from the Ludus node)"
+  hosts: proxmox_master
+  gather_facts: false
+  tasks:
+    - name: "Refuse --check"
+      ansible.builtin.assert:
+        that: not ansible_check_mode
+        fail_msg: >-
+          This play installs/reconciles the Ludus server, may run the installer,
+          rewrites config.yml and restarts services — check mode cannot simulate
+          any of that and must not half-run. Re-run without --check.
+        quiet: true
+
+    - name: "Cluster admission gate"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_preflight
+
+    - name: "Stand up and reconcile Ludus"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_install

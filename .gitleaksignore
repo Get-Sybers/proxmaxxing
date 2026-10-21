@@ -1,0 +1,11 @@
+# gitleaks fingerprint allowlist (doc/standards/04). One `commit:path:rule:line`
+# fingerprint per line, each with a comment stating why it is a false positive.
+# The hooks scan the working tree (no commit prefix); a run that scans history
+# reports the same finding with a commit-qualified fingerprint, which is added
+# beside the plain one when it appears.
+#
+# The PUBLIC stock default database_encryption_key that Ludus ships in its own
+# source (badsectorlabs/ludus, ludus-api/config.go). The role compares the live
+# key against it to refuse operating on an uninitialised store; it is not a
+# credential.
+roles/cluster_ludus_auth/defaults/main.yml:generic-api-key:6

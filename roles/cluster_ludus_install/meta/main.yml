@@ -1,0 +1,21 @@
+---
+galaxy_info:
+  role_name: cluster_ludus_install
+  namespace: get_sybers
+  author: Get-Sybers
+  description: >-
+    Idempotently stand up and reconcile a Ludus server on a Proxmox cluster node.
+    Ensures the Ludus install is present (optionally running the official
+    ludus-server binary non-interactively on a fresh host), reconciles the SAFE
+    keys of /opt/ludus/config.yml for cluster mode + shared (Ceph) storage +
+    reserved range numbers WITHOUT ever rewriting database_encryption_key or the
+    host network keys, stages the ROOT API key into the house credential store,
+    and verifies the services and the on-disk config. A second run is changed=0.
+  company: Get-Sybers
+  license: AGPL-3.0-only
+  min_ansible_version: "2.19.0"
+  platforms:
+    - name: Debian
+      versions: [bookworm, trixie]
+  galaxy_tags: [ludus, install, config, reconcile, cluster, proxmox]
+dependencies: []

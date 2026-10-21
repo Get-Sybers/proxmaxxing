@@ -1,0 +1,40 @@
+---
+- name: "pve_node | Stat /etc/pve (pmxcfs mountpoint)"
+  ansible.builtin.stat:
+    path: /etc/pve
+  register: __cpf_etc_pve
+  check_mode: false
+  delegate_to: "{{ cluster_preflight_delegate_to }}"
+- name: "pve_node | Assert /etc/pve exists"
+  ansible.builtin.assert:
+    that:
+      - __cpf_etc_pve.stat.exists
+      - __cpf_etc_pve.stat.isdir
+    fail_msg: >-
+      /etc/pve is absent — this host is not a Proxmox VE node. cluster plays
+      run only on members of the cluster (the {{ cluster_preflight_cluster_group }} group).
+    quiet: true
+- name: "pve_node | Read the execution host's name"
+  ansible.builtin.command: hostname
+  register: __cpf_hostname
+  changed_when: false
+  check_mode: false
+  delegate_to: "{{ cluster_preflight_delegate_to }}"
+- name: "pve_node | Read cluster membership"
+  ansible.builtin.command: pvecm nodes
+  register: __cpf_pvecm
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  delegate_to: "{{ cluster_preflight_delegate_to }}"
+- name: "pve_node | Assert this host is a cluster member"
+  ansible.builtin.assert:
+    that: >-
+      (__cpf_pvecm.rc == 0
+       and (__cpf_hostname.stdout | trim) in __cpf_pvecm.stdout.split())
+      or ((__cpf_hostname.stdout | trim) in (groups[cluster_preflight_cluster_group] | default([])))
+    fail_msg: >-
+      Host '{{ __cpf_hostname.stdout | trim }}' is not in `pvecm nodes`
+      (rc={{ __cpf_pvecm.rc }}) and not in inventory group
+      {{ cluster_preflight_cluster_group }}. cluster plays run only on cluster members.
+    quiet: true

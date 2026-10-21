@@ -1,0 +1,11 @@
+---
+- name: "redirect_one | Refuse to write — this approach is superseded"
+  ansible.builtin.assert:
+    that: false
+    fail_msg: >-
+      cluster_patch_packer_iso_apply is no longer supported. Rewriting templates to iso_file
+      emits invalid HCL on 12 of 30 templates (nested boot_iso) AND drops the
+      checksum verification that Proxmox performs on the native download path.
+      Use iso_download_pve = true plus an ISO present under the URL basename
+      instead. Run without cluster_patch_packer_iso_apply for the report, which is still valid.
+    quiet: true

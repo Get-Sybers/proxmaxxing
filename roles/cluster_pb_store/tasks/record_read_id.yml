@@ -1,0 +1,24 @@
+---
+- name: "record_read_id | Fetch the record by id"
+  ansible.builtin.uri:
+    url: "{{ cluster_pb_store_base_url }}/api/collections/{{ cluster_pb_store_collection_name }}/records/{{ cluster_pb_store_record_id }}"
+    method: GET
+    headers:
+      Authorization: "{{ __pb_super_token }}"
+    validate_certs: "{{ cluster_pb_store_validate_certs }}"
+    status_code: [200]
+  register: __pb_record_read_id
+  no_log: true
+  check_mode: false
+  changed_when: false
+- name: "record_read_id | Derive the record facts (no_log)"
+  ansible.builtin.set_fact:
+    __pb_record_read_record: "{{ __pb_record_read_id.json }}"
+    __pb_record_read_value: "{{ __pb_record_read_id.json.value | default('') }}"
+  no_log: true
+- name: "record_read_id | Report SHAPE only"
+  ansible.builtin.debug:
+    msg: >-
+      Record id {{ cluster_pb_store_record_id }} read from
+      {{ cluster_pb_store_collection_name }}
+      ({{ __pb_record_read_record.keys() | length }} fields).

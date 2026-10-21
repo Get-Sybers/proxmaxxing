@@ -1,0 +1,13 @@
+---
+# Admin PVE API credential for the controller-side plays that drive the PVE API
+# through community.proxmox (the ghost9 token mint). Read
+# from the collection's documented PROXMOX_* environment variables — export
+# PROXMOX_TOKEN_ID + PROXMOX_TOKEN_SECRET (preferred) or PROXMOX_PASSWORD (with
+# PROXMOX_USER) before running. Nothing secret is stored here.
+pve_api_host: "{{ lookup('ansible.builtin.env', 'PROXMOX_HOST') | default('127.0.0.1', true) }}"
+pve_api_user: "{{ lookup('ansible.builtin.env', 'PROXMOX_USER') | default('root@pam', true) }}"
+pve_api_token_id: "{{ lookup('ansible.builtin.env', 'PROXMOX_TOKEN_ID') | default('', true) }}"
+pve_api_token_secret: "{{ lookup('ansible.builtin.env', 'PROXMOX_TOKEN_SECRET') | default('', true) }}"
+pve_api_password: "{{ lookup('ansible.builtin.env', 'PROXMOX_PASSWORD') | default('', true) }}"
+# The node API serves a self-signed certificate.
+pve_validate_certs: false

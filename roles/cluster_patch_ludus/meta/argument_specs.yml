@@ -1,0 +1,41 @@
+---
+argument_specs:
+  main:
+    short_description: "Re-apply the local exact-string patches to STOCK Ludus files after a ludus-server --update reverts them."
+    description:
+      - >-
+        Applies the patch manifest in vars/main.yml (cluster_patch_ludus_list and
+        cluster_patch_ludus_reorder — role-internal data, not inputs) to the stock Ludus
+        tree, idempotently via per-patch markers, re-reading each file from disk
+        to prove it. The options below are the defaults-backed inputs.
+    options:
+      cluster_patch_ludus_root:
+        type: str
+        required: false
+        default: "/opt/ludus"
+        description: "Ludus install root; the manifest stores paths relative to this."
+      cluster_patch_ludus_derived_from:
+        type: str
+        required: false
+        default: "2.3.1"
+        description: "Ludus server version the manifest was derived from; the version guard asserts the running binary matches."
+      cluster_patch_ludus_skip_version_check:
+        type: bool
+        required: false
+        default: false
+        description: "Skip the version guard — set true only after confirming every stock payload still resolves on the installed version."
+      cluster_patch_ludus_file_owner:
+        type: str
+        required: false
+        default: "ludus"
+        description: "Owner every patched file is written back with (the extraction value; root-owned breaks the non-root ludus service user)."
+      cluster_patch_ludus_file_group:
+        type: str
+        required: false
+        default: "ludus"
+        description: "Group every patched file is written back with (the extraction value)."
+      cluster_patch_ludus_file_mode:
+        type: str
+        required: false
+        default: "0644"
+        description: "Mode every patched file is written back with (the extraction value)."

@@ -1,0 +1,253 @@
+---
+- name: "Read Ludus server version"
+  ansible.builtin.shell:
+    cmd: "set -o pipefail; ludus version 2>&1 | grep -oE 'Ludus Server [0-9]+\\.[0-9]+\\.[0-9]+'"
+    executable: /bin/bash
+  register: __lp_server_version
+  changed_when: false
+  check_mode: false
+  failed_when: false
+- name: "Assert manifest version matches running binary (skip with -e cluster_patch_ludus_skip_version_check=true)"
+  ansible.builtin.assert:
+    that: >-
+      cluster_patch_ludus_skip_version_check | bool
+      or (__lp_server_version.rc == 0 and __lp_server_version.stdout is search(cluster_patch_ludus_derived_from | regex_escape))
+    fail_msg: >-
+      Version guard failed. rc={{ __lp_server_version.rc }};
+      output={{ __lp_server_version.stdout | trim }}.
+      {% if __lp_server_version.rc != 0 %}
+      The binary {{ cluster_patch_ludus_root }}/ludus-server was not found or returned a
+      non-zero exit code — check cluster_patch_ludus_root and ensure Ludus is installed.
+      {% else %}
+      This manifest was derived from Ludus {{ cluster_patch_ludus_derived_from }}, but
+      the running binary reports a different version. A stock file may have been
+      renamed — re-derive the manifest against the installed version before
+      applying.
+      {% endif %}
+      Pass -e cluster_patch_ludus_skip_version_check=true only after confirming every
+      stock: payload still resolves against the installed tree.
+    quiet: true
+- name: "Ludus install stages must be complete"
+  ansible.builtin.stat:
+    path: "{{ cluster_patch_ludus_root }}/install/.stage-{{ item }}-complete"
+  loop: ["1", "2", "3"]
+  register: __lp_stages
+- name: "Fail if any install stage is incomplete"
+  ansible.builtin.assert:
+    that: __lp_stages.results | map(attribute='stat.exists') | select | list | length == 3
+    fail_msg: >-
+      One or more Ludus install stages are not complete
+      ({{ cluster_patch_ludus_root }}/install/.stage-{1,2,3}-complete).
+      Ensure `ludus` has finished installing before applying patches.
+    quiet: true
+- name: "Preflight — every target file exists"
+  ansible.builtin.stat:
+    path: "{{ cluster_patch_ludus_root }}/{{ item }}"
+  loop: "{{ (cluster_patch_ludus_list | map(attribute='file') | list + [cluster_patch_ludus_reorder.file]) | unique }}"
+  register: __lp_files
+- name: "Fail clearly if a stock file is missing"
+  ansible.builtin.assert:
+    that: __lp_files.results | map(attribute='stat.exists') | select | list | length
+          == (__lp_files.results | length)
+    fail_msg: >-
+      Missing stock file(s):
+      {{ __lp_files.results | rejectattr('stat.exists') | map(attribute='item') | list }}.
+      Is this a Ludus install root, and has --update completed?
+    quiet: true
+- name: "Pre-flight — read all target files"
+  ansible.builtin.slurp:
+    src: "{{ cluster_patch_ludus_root }}/{{ item.file }}"
+  loop: "{{ cluster_patch_ludus_list }}"
+  loop_control:
+    label: "{{ item.id }}"
+  register: __lp_preflight
+- name: "Pre-flight — every patch is applicable or already applied"
+  vars:
+    __pf_content: "{{ __lp_preflight.results[_pf_idx].content | b64decode }}"
+  ansible.builtin.assert:
+    that:
+      - (item.marker in __pf_content) or (__pf_content.count(item.stock) == 1)
+      - (item.marker in __pf_content) or (__pf_content.count(item.stock) <= 1)
+    fail_msg: >-
+      {{ item.id }} ({{ item.err }}): pre-flight failed for {{ item.file }}.
+      marker_present={{ item.marker in __pf_content }},
+      stock_present={{ item.stock in __pf_content }},
+      stock_count={{ __pf_content.count(item.stock) }}.
+      With the marker absent, the stock text must appear EXACTLY ONCE so there
+      is one unambiguous place to patch. Zero means version skew after
+      --update — re-derive this patch against the installed file. More than one
+      means the anchor is not unique and would patch the wrong site.
+      No file has been written by this run.
+    quiet: true
+  loop: "{{ cluster_patch_ludus_list }}"
+  loop_control:
+    label: "{{ item.id }}"
+    index_var: _pf_idx
+- name: "Apply the text patches"
+  ansible.builtin.include_tasks: apply_one.yml
+  loop: "{{ cluster_patch_ludus_list }}"
+  loop_control:
+    loop_var: patch
+    label: "{{ patch.id }}"
+- name: "ERR-103 — read ludus.yml"
+  ansible.builtin.slurp:
+    src: "{{ cluster_patch_ludus_root }}/{{ cluster_patch_ludus_reorder.file }}"
+  register: __lp_reorder_raw
+- name: "ERR-103 — decode once and locate the landmarks"
+  ansible.builtin.set_fact:
+    __lp_c: "{{ __lp_reorder_raw.content | b64decode }}"
+- name: "ERR-103 — landmark offsets"
+  ansible.builtin.set_fact:
+    __lp_start: "{{ __lp_c.find(cluster_patch_ludus_reorder.section_start) }}"
+    __lp_end: "{{ __lp_c.find(cluster_patch_ludus_reorder.section_end) }}"
+    __lp_anchor: "{{ __lp_c.find(cluster_patch_ludus_reorder.anchor) }}"
+- name: "ERR-103 — all three landmarks must exist"
+  ansible.builtin.assert:
+    that:
+      - (__lp_start | int) >= 0
+      - (__lp_end | int) >= 0
+      - (__lp_anchor | int) >= 0
+    fail_msg: >-
+      ERR-103: landmark missing in {{ cluster_patch_ludus_reorder.file }}
+      (section_start={{ __lp_start }}, section_end={{ __lp_end }},
+       anchor={{ __lp_anchor }}). Stock 2.3.0 text has changed — re-derive rather
+      than forcing the move.
+    quiet: true
+- name: "ERR-103 — ordering already correct, nothing to do"
+  ansible.builtin.debug:
+    msg: >-
+      ERR-103: sysprep section already precedes the identity play
+      ({{ __lp_start }} < {{ __lp_anchor }}) — no-op.
+  when: (__lp_start | int) < (__lp_anchor | int)
+- name: "ERR-103 — move the sysprep section before the anchor"
+  when: (__lp_start | int) > (__lp_anchor | int)
+  block:
+    - name: "ERR-103 — slice the section out and re-insert it"
+      ansible.builtin.set_fact:
+        __lp_section: "{{ __lp_c[(__lp_start | int) : (__lp_end | int)] }}"
+    - name: "ERR-103 — the slice must be sane and must not contain the anchor"
+      ansible.builtin.assert:
+        that:
+          - (__lp_end | int) > (__lp_start | int)
+          - cluster_patch_ludus_reorder.anchor not in __lp_section
+          - __lp_section | length > 0
+        fail_msg: >-
+          ERR-103: refusing to reorder. The slice
+          [{{ __lp_start }}:{{ __lp_end }}] ({{ __lp_section | length }} bytes)
+          is malformed or contains the anchor, which would delete the anchor play
+          instead of moving the sysprep section. Re-derive the landmarks against
+          the current stock file.
+        quiet: true
+    - name: "ERR-103 — a real newline, resolved by YAML not Jinja"
+      ansible.builtin.set_fact:
+        __lp_nl: "\n"
+    - name: "ERR-103 — rebuild the file"
+      ansible.builtin.set_fact:
+        __lp_reordered: >-
+          {{ (__lp_c[:(__lp_start | int)] ~ __lp_c[(__lp_end | int):])
+             | replace(cluster_patch_ludus_reorder.anchor,
+                       __lp_section ~ __lp_nl ~ cluster_patch_ludus_reorder.anchor) }}
+    - name: "ERR-103 — the rebuilt file must still be valid YAML"
+      ansible.builtin.assert:
+        that: (__lp_reordered | from_yaml) is iterable
+        fail_msg: >-
+          ERR-103: the rebuilt {{ cluster_patch_ludus_reorder.file }} is not parseable
+          YAML. Refusing to write — a corrupt playbook here breaks every
+          `ludus range deploy` on this server.
+        quiet: true
+    - name: "ERR-103 — the move must preserve the file, not shrink it"
+      ansible.builtin.assert:
+        that:
+          - __lp_reordered != __lp_c
+          - (__lp_reordered | length) >= (__lp_c | length)
+          - cluster_patch_ludus_reorder.anchor in __lp_reordered
+          - cluster_patch_ludus_reorder.section_start in __lp_reordered
+        fail_msg: >-
+          ERR-103: the reorder did not produce a faithful move
+          (before={{ __lp_c | length }} bytes, after={{ __lp_reordered | length }};
+          anchor present={{ cluster_patch_ludus_reorder.anchor in __lp_reordered }},
+          section present={{ cluster_patch_ludus_reorder.section_start in __lp_reordered }}).
+          Refusing to write.
+        quiet: true
+    - name: "ERR-103 — write ludus.yml"
+      ansible.builtin.copy:
+        content: "{{ __lp_reordered }}"
+        dest: "{{ cluster_patch_ludus_root }}/{{ cluster_patch_ludus_reorder.file }}"
+        owner: "{{ cluster_patch_ludus_file_owner }}"
+        group: "{{ cluster_patch_ludus_file_group }}"
+        mode: "{{ cluster_patch_ludus_file_mode }}"
+- name: "Re-read every patched file"
+  ansible.builtin.slurp:
+    src: "{{ cluster_patch_ludus_root }}/{{ item }}"
+  loop: "{{ (cluster_patch_ludus_list | map(attribute='file') | list + [cluster_patch_ludus_reorder.file]) | unique }}"
+  register: __lp_verify
+- name: "Every patch marker is present on disk"
+  ansible.builtin.assert:
+    that: >-
+      {{ (__lp_verify.results | selectattr('item', 'equalto', item.file) | first)
+         .content | b64decode is search(item.marker | regex_escape) }}
+    fail_msg: >-
+      {{ item.id }} ({{ item.err }}): marker not found in {{ item.file }} after
+      applying. The patch reported success but the file does not carry it.
+    quiet: true
+  loop: "{{ cluster_patch_ludus_list }}"
+  loop_control:
+    label: "{{ item.id }}"
+  when: not ansible_check_mode
+- name: "ERR-103 ordering is correct on disk"
+  vars:
+    __c: "{{ (__lp_verify.results | selectattr('item', 'equalto', cluster_patch_ludus_reorder.file) | first).content | b64decode }}"
+  ansible.builtin.assert:
+    that: (__c.find(cluster_patch_ludus_reorder.section_start) | int) < (__c.find(cluster_patch_ludus_reorder.anchor) | int)
+    fail_msg: >-
+      ERR-103: on disk, the sysprep section still follows "Configure IP and
+      Hostname". The generalise-before-identity dependency is still inverted.
+    quiet: true
+- name: "Own every patched file as the ludus service user"
+  ansible.builtin.file:
+    path: "{{ cluster_patch_ludus_root }}/{{ item }}"
+    owner: "{{ cluster_patch_ludus_file_owner }}"
+    group: "{{ cluster_patch_ludus_file_group }}"
+    mode: "{{ cluster_patch_ludus_file_mode }}"
+  loop: "{{ (cluster_patch_ludus_list | map(attribute='file') | list + [cluster_patch_ludus_reorder.file]) | unique }}"
+- name: "Patched files are readable by the ludus service user"
+  ansible.builtin.stat:
+    path: "{{ cluster_patch_ludus_root }}/{{ item }}"
+  loop: "{{ (cluster_patch_ludus_list | map(attribute='file') | list + [cluster_patch_ludus_reorder.file]) | unique }}"
+  register: __lp_stat
+- name: "Ownership and mode are the extraction values"
+  ansible.builtin.assert:
+    that:
+      - item.stat.pw_name == cluster_patch_ludus_file_owner
+      - item.stat.gr_name == cluster_patch_ludus_file_group
+      - item.stat.mode == cluster_patch_ludus_file_mode
+    fail_msg: >-
+      {{ item.item }} is {{ item.stat.pw_name }}:{{ item.stat.gr_name }}
+      {{ item.stat.mode }}, not {{ cluster_patch_ludus_file_owner }}:{{ cluster_patch_ludus_file_group }}
+      {{ cluster_patch_ludus_file_mode }}. The Ludus API runs its playbooks as the
+      non-root `ludus` user and will fail with EACCES.
+    quiet: true
+  loop: "{{ __lp_stat.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+- name: "Every patched YAML file still parses"
+  ansible.builtin.assert:
+    that: >-
+      ((__lp_verify.results | selectattr('item', 'equalto', item) | first).content
+       | b64decode | from_yaml) is iterable
+    fail_msg: >-
+      {{ item }} is no longer parseable YAML after patching. Ludus cannot run
+      it; no marker or length check can see this.
+    quiet: true
+  loop: >-
+    {{ (cluster_patch_ludus_list | map(attribute='file') | list + [cluster_patch_ludus_reorder.file])
+       | unique | select('search', '\.ya?ml$') | list }}
+- name: "Report"
+  ansible.builtin.debug:
+    msg:
+      text_patches: "{{ cluster_patch_ludus_list | length }}"
+      reorder: "{{ cluster_patch_ludus_reorder.id }}"
+      errs_covered: "{{ (cluster_patch_ludus_list | map(attribute='err') | list + [cluster_patch_ludus_reorder.err]) | unique | sort }}"
+      all_markers_present_on_disk: true
+      owned_by: "{{ cluster_patch_ludus_file_owner }}:{{ cluster_patch_ludus_file_group }} {{ cluster_patch_ludus_file_mode }}"
+      yaml_parses_on_disk: true

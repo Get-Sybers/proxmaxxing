@@ -1,0 +1,39 @@
+---
+# Ceph desired state for the cluster (consumed by cluster-ceph-tuning, which
+# applies it, and cluster-ceph-diagnose, which checks drift against the SAME
+# values so the two can never diverge).
+# Copied into place by `make config`; the copy is untracked.
+
+# The RBD pool the cluster runs guests on (`pvesm status` lists yours), and
+# its replication policy.
+ceph_pool: CHANGE-ME
+ceph_pool_size: 2
+ceph_pool_min_size: 2
+# The pve-managed ceph.conf and the [global] defaults kept in step with the
+# pool policy.
+ceph_conf_path: /etc/pve/ceph.conf
+ceph_conf_defaults:
+  - { key: size, value: "{{ ceph_pool_size }}" }
+  - { key: min_size, value: "{{ ceph_pool_min_size }}" }
+# Canonical OSD tuning for a 1 Gb, 2-OSD-host cluster.
+ceph_osd_tuning:
+  - {section: osd, name: osd_mclock_profile, value: "high_client_ops", why: "favour client I/O over recovery"}
+  - {section: osd, name: osd_mclock_override_recovery_settings, value: "true", why: "without this the two caps below are ignored"}
+  - {section: osd, name: osd_max_backfills, value: "1", why: "cap concurrent backfills"}
+  - {section: osd, name: osd_recovery_max_active, value: "2", why: "cap concurrent recovery ops"}
+
+# --- Diagnosis (cluster-ceph-diagnose) --------------------------------------
+# The ZFS pool each node's mon store lives on, and the free-space thresholds
+# it is held to (Ceph's own mon_data_avail_warn/crit).
+ceph_mon_store_pool: rpool
+ceph_mon_avail_warn_pct: 30
+ceph_mon_avail_crit_pct: 5
+# The /24 host-prefix string ("198.51.100.") mon addresses must match on the mesh.
+ceph_mesh_prefix: "{{ mesh_prefix.split('/')[0].rsplit('.', 1)[0] ~ '.' }}"
+# Every explicitly-set config key the diagnosis checks for drift.
+ceph_expected_config: >-
+  {{ (ceph_osd_tuning | items2dict(key_name='name', value_name='value'))
+     | combine({'osd_pool_default_size': ceph_pool_size | string,
+                'osd_pool_default_min_size': ceph_pool_min_size | string}) }}
+# Fail the diagnosis on a CRIT finding (-e ceph_gate_strict=true to enforce).
+ceph_gate_strict: false

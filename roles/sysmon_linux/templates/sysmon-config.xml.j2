@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  {{ ansible_managed }}
+  Sysmon for Linux config for the Proxmox cluster nodes — get_sybers.cluster.sysmon_linux
+  TUNING INTENT: these are hypervisors, not workstations. The two events that would drown
+  a Proxmox node are NetworkConnect (Ceph OSD/MON + corosync chatter is constant, and the
+  storage mesh moves multiple Gb/s) and unfiltered FileCreate (every VM disk write path,
+  every template build). So:
+    - NetworkConnect is EXCLUDE-based and drops all intra-cluster traffic — the LAN, the
+      OpenFabric storage mesh, loopback and the Ludus range NAT. What survives is
+      egress leaving the cluster, which is the signal worth having on a hypervisor.
+    - FileCreate/FileDelete are INCLUDE-based and only fire on integrity-relevant paths.
+    - ProcessCreate/ProcessTerminate are unfiltered: process lineage is the primary value
+      of Sysmon and node process rates are low.
+  Complements auditd rather than duplicating it: auditd answers "who touched this file /
+  ran this tool" with login-uid attribution; Sysmon answers "what is the process tree and
+  where did it connect".
+-->
+<Sysmon schemaversion="{{ sysmon_linux_schema_version }}">
+  <HashAlgorithms>{{ sysmon_linux_hash_algorithms }}</HashAlgorithms>
+  <EventFiltering>
+    <!-- 1 / ProcessCreate — unfiltered. Process lineage is the point. -->
+    <RuleGroup name="proc_create" groupRelation="or">
+      <ProcessCreate onmatch="exclude" />
+    </RuleGroup>
+    <!-- 5 / ProcessTerminate — unfiltered; needed to close out lineage. -->
+    <RuleGroup name="proc_term" groupRelation="or">
+      <ProcessTerminate onmatch="exclude" />
+    </RuleGroup>
+    <!-- 3 / NetworkConnect — exclude intra-cluster; keep egress that leaves the cluster. -->
+    <RuleGroup name="net_connect" groupRelation="or">
+      <NetworkConnect onmatch="exclude">
+{% for cidr in sysmon_linux_excluded_dest_prefixes %}
+        <DestinationIp condition="begin with">{{ cidr }}</DestinationIp>
+{% endfor %}
+        <SourceIp condition="is">127.0.0.1</SourceIp>
+      </NetworkConnect>
+    </RuleGroup>
+    <!-- 11 / FileCreate — integrity-relevant paths only. -->
+    <RuleGroup name="file_create" groupRelation="or">
+      <FileCreate onmatch="include">
+{% for p in sysmon_linux_watched_paths %}
+        <TargetFilename condition="begin with">{{ p }}</TargetFilename>
+{% endfor %}
+      </FileCreate>
+    </RuleGroup>
+    <!-- 23 / FileDelete — same paths. Deletion of a unit file or authorized_keys matters. -->
+    <RuleGroup name="file_delete" groupRelation="or">
+      <FileDelete onmatch="include">
+{% for p in sysmon_linux_watched_paths %}
+        <TargetFilename condition="begin with">{{ p }}</TargetFilename>
+{% endfor %}
+      </FileDelete>
+    </RuleGroup>
+    <!-- 9 / RawAccessRead — raw device reads. Low volume, high signal on a hypervisor. -->
+    <RuleGroup name="raw_read" groupRelation="or">
+      <RawAccessRead onmatch="exclude" />
+    </RuleGroup>
+  </EventFiltering>
+</Sysmon>

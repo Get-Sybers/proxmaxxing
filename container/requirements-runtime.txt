@@ -1,0 +1,17 @@
+# Controller-side Python deps for running get_sybers.cluster against the live
+# cluster from inside the container. ansible-core itself is installed separately
+# (the Containerfile's ANSIBLE_CORE build arg), so it is deliberately absent here.
+#
+# Bounded to a major/minor so a rebuild cannot silently cross a breaking release;
+# tighten to exact X.Y.Z if you want the same pin discipline requirements.yml
+# applies to the collections.
+
+# community.proxmox transport — the ghost9 token-mint play drives the PVE API
+# through proxmoxer, which speaks HTTP via requests.
+proxmoxer>=2.0,<3
+requests>=2.31,<3
+
+# Validators — make the image double as a syntax/lint gate for the plays, so the
+# tree can be checked without a full tox/molecule host setup.
+ansible-lint>=25.0,<26
+yamllint>=1.35,<2

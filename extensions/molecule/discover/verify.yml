@@ -1,0 +1,134 @@
+---
+- name: Verify
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Load the committed fixture again
+      ansible.builtin.include_vars:
+        file: files/fixture.yml
+    - name: Read back the records converge wrote in place
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      loop:
+        - /tmp/molecule-inventory/host_vars/cluster-instance/node.yml
+        - /tmp/molecule-inventory/group_vars/molecule/cluster.yml
+      register: __cdv_files
+    - name: Parse them
+      ansible.builtin.set_fact:
+        __cdv_node: "{{ (__cdv_files.results[0].content | b64decode | from_yaml).node }}"
+        __cdv_cluster: "{{ (__cdv_files.results[1].content | b64decode | from_yaml).cluster }}"
+        __cdv_node_text: "{{ __cdv_files.results[0].content | b64decode }}"
+    - name: Fill kept the hand values and added what was missing
+      ansible.builtin.assert:
+        that:
+          - __cdv_node.kernel == '6.14-old'
+          - __cdv_node.hardware.cpu == 'Old CPU'
+          - __cdv_node.hardware.mem_total_mb == 128000
+          - __cdv_node.mgmt_ip == '192.0.2.10'
+          - __cdv_node.ceph.roles == ['mon', 'mgr-active', 'osd']
+          - __cdv_node.zfs_pools[0].name == 'rpool'
+          - __cdv_cluster.config_version == 1
+          - __cdv_cluster.quorate | bool
+          - __cdv_cluster.ceph.fsid == '8ffdef63-1eb6-45a3-a4dc-fc0455ef363b'
+        fail_msg: "fill did not keep the configured values and add the missing ones: {{ __cdv_node }}"
+        quiet: true
+    - name: Fill merged the keyed lists element-wise (annotations kept, new members appended)
+      ansible.builtin.assert:
+        that:
+          - __cdv_node.disks | map(attribute='dev') | list == ['nvme0n1', 'sda', 'nvme1n1']
+          - __cdv_node.disks[0].role == 'rpool (ZFS root)'
+          - __cdv_node.disks[0].model == 'CT4000P3PSSD8'
+          - __cdv_node.disks[1].role == 'tank (ZFS)'
+          - __cdv_node.network.vmbr0.role == 'mgmt/LAN'
+          - __cdv_node.network.vmbr0.ports == ['nic0']
+          - __cdv_node.network.dummy0.type == 'dummy'
+          - __cdv_node.guests.vms | map(attribute='id') | list == [9400, 9509]
+          - __cdv_node.guests.vms[0].status == 'running'
+          - __cdv_cluster.storage[0].note == 'hand annotation'
+          - __cdv_cluster.storage | map(attribute='id') | list == ['local', 'ludus-ceph']
+          - __cdv_cluster.pools[0].comment == 'VMs managed by the admin'
+          - __cdv_cluster.pools[0].members == [9400]
+        fail_msg: "keyed-list fill went wrong: {{ __cdv_node.disks }} / {{ __cdv_cluster.storage }}"
+        quiet: true
+    - name: The written YAML is in the inventory style (indented sequences, document start, banner)
+      ansible.builtin.assert:
+        that:
+          - __cdv_node_text.startswith('---\n# Per-node As-Is record')
+          - "'\n  disks:\n    - dev: nvme0n1\n' in __cdv_node_text"
+        fail_msg: "node.yml is not in the expected style:\n{{ __cdv_node_text }}"
+        quiet: true
+    - name: Overwrite into the proposal tree (live values win, annotations survive)
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_discover
+        tasks_from: render
+      vars:
+        cluster_discover_write: additional
+        cluster_discover_overwrite: true
+        cluster_discover_inventory_dir: /tmp/molecule-inventory
+        cluster_discover_group: molecule
+        cluster_discover_delegate_to: "{{ inventory_hostname }}"
+    - name: Read back the proposal files
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      loop:
+        - /tmp/molecule-inventory/discovered/host_vars/cluster-instance/node.yml
+        - /tmp/molecule-inventory/discovered/group_vars/molecule/cluster.yml
+      register: __cdv_proposals
+    - name: Overwrite replaced the discovered values and kept the annotations
+      ansible.builtin.assert:
+        that:
+          - __cdv_p_node.kernel == '7.0.14-8-pve'
+          - __cdv_p_node.hardware.cpu == 'Intel Core Ultra 9 275HX'
+          - __cdv_p_node.disks[0].role == 'rpool (ZFS root)'
+          - __cdv_p_node.guests.vms[0].status == 'stopped'
+          - __cdv_p_cluster.config_version == 2
+          - __cdv_p_cluster.pools[0].comment == 'VMs managed by the Ludus admin'
+          - __cdv_p_cluster.pools[0].members == [9400, 9509]
+          - __cdv_p_cluster.storage[0].note == 'hand annotation'
+        fail_msg: "overwrite went wrong: {{ __cdv_p_node }} / {{ __cdv_p_cluster }}"
+        quiet: true
+      vars:
+        __cdv_p_node: "{{ (__cdv_proposals.results[0].content | b64decode | from_yaml).node }}"
+        __cdv_p_cluster: "{{ (__cdv_proposals.results[1].content | b64decode | from_yaml).cluster }}"
+    - name: The drift report names exactly the values the node contradicts or adds
+      ansible.builtin.assert:
+        that:
+          - "'kernel' in __cdv_paths"
+          - "'hardware.cpu' in __cdv_paths"
+          - "'mgmt_ip' in __cdv_paths"
+          - "'disks[dev=nvme1n1]' in __cdv_paths"
+          - "'disks[dev=nvme0n1].model' in __cdv_paths"
+          - "'guests.vms[id=9400].status' in __cdv_paths"
+          - "'hardware.cpus' not in __cdv_paths"
+          - "'disks[dev=sda]' not in __cdv_paths"
+        fail_msg: "unexpected drift set: {{ __cdv_paths }}"
+        quiet: true
+      vars:
+        __cdv_paths: "{{ __cd_node_drift | map(attribute='path') | list }}"
+    - name: The strict gate fails on drift
+      block:
+        - name: Render with the gate armed
+          ansible.builtin.include_role:
+            name: get_sybers.cluster.cluster_discover
+            tasks_from: render
+          vars:
+            cluster_discover_write: additional
+            cluster_discover_strict: true
+            cluster_discover_inventory_dir: /tmp/molecule-inventory
+            cluster_discover_group: molecule
+            cluster_discover_delegate_to: "{{ inventory_hostname }}"
+      rescue:
+        - name: The gate stopped on the drift
+          ansible.builtin.assert:
+            that: "'disagrees with the live cluster' in (ansible_failed_result.msg | default(''))"
+            fail_msg: "failed, but not at the drift gate: {{ ansible_failed_result | default({}) }}"
+            quiet: true
+        - name: Record the controlled failure
+          ansible.builtin.set_fact:
+            __cdv_gate_failed: true
+    - name: The strict gate was actually enforced
+      ansible.builtin.assert:
+        that: __cdv_gate_failed | default(false)
+        fail_msg: "cluster_discover_strict=true did not fail on a drifted record"
+        quiet: true

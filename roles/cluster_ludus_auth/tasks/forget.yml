@@ -1,0 +1,9 @@
+---
+- name: "forget | Forget every secret fact (keys and the DEK)"
+  ansible.builtin.set_fact:
+    __cla_api_key: ""
+    __cla_new_key: ""
+    __cla_key_raw: ""
+    __cla_dek: ""
+    __cla_cfg: ""
+  no_log: true

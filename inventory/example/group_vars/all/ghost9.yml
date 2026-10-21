@@ -1,0 +1,21 @@
+---
+# cluster-ghost9-pve-token: the scoped deploy identity for the ghost9 range CT.
+# Copied into place by `make config`; the copy is untracked.
+g9_user: "ghost9-deploy@pve"
+g9_token: "svc"
+# CHANGE-ME: the VMID of the ghost9 range CT the token is scoped to.
+g9_vmid: CHANGE-ME
+# The ACL-anchor pool the play creates (it survives a CT destroy) and the
+# range VNet (sdn_range_vnets number 1 is VNet r1, see sdn.yml).
+g9_pool: "GHOST9"
+g9_vnet: "r1"
+g9_record: "GHOST9.pve-token"
+g9_staging: /root/.ghost9-pve-token-staging
+# The 0600 deploy-vars file the range configuration reads the token from.
+g9_deploy_vars: /root/.ghost9-api.yml
+# Everything the deploy token may touch, and nothing else.
+g9_acls:
+  - { path: "/pool/{{ g9_pool }}", role: PVEVMAdmin }
+  - { path: "/storage/local", role: PVEDatastoreUser }
+  - { path: "/storage/local-zfs", role: PVEDatastoreUser }
+  - { path: "/sdn/zones/{{ sdn_zone }}/{{ g9_vnet }}", role: PVESDNUser }

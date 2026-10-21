@@ -1,0 +1,68 @@
+---
+schema_version: 1
+role: cluster_patch_ludus
+baseline: ludus-local-patches
+status: promoted
+derived_from:
+  - name: badsectorlabs/ludus
+    url: https://gitlab.com/badsectorlabs/ludus
+    commit: f8d0295c
+    commit_is: tag-2.3.1
+    branch: main
+    licence: AGPL-3.0
+    licence_holder: Bad Sector Labs
+    relationship: excerpted-not-vendored
+    vendored: []
+    excerpts:
+      - upstream: ludus-server/ansible/range-management/ludus.yml
+        patches: [ERR-13/ludus, ERR-22/serial, ERR-103/sysprep-ordering]
+      - upstream: ludus-server/ansible/range-management/tasks/proxmox/deploy-vm.yml
+        patches: [ERR-13/deploy-vm]
+      - upstream: ludus-server/ansible/range-management/tasks/windows/sysprep.yml
+        patches:
+          - ERR-21/sysprep-block
+          - ERR-21/sysprep-rescue
+          - ERR-21/reboot-timeout
+          - ERR-22/ualsvc-block
+          - ERR-22/ualsvc-rescue
+      - upstream: ludus-server/ansible/user-management/add-user.yml
+        patches: [ACL-STORAGE/add-user]
+      - upstream: ludus-server/ansible/proxmox-install/stage-1.yml
+        patches: [GRUB-ZFS/stage-1]
+      - upstream: ludus-server/ansible/proxmox-install/templates/interfaces.j2
+        patches: [SDN-SOURCE/interfaces]
+      - upstream: ludus-server/ansible/range-management/tasks/router/configure-router.yml
+        patches: [ADGUARD/install, ADGUARD/reconfigure]
+      - upstream: ludus-server/ansible/range-management/pre-run-checks.yml
+        patches: [SDN-PRECHECK/pre-run-checks]
+    note: >-
+      Six of the fourteen patches were ported on 2026-08-02 out of a
+      now-deleted staging tree (.Non-Distribute/for-ingest/misc/server-ansible/),
+      where they existed only as modified copies of stock files scraped off a
+      running 2.3.0+02a3ffc8 server. Porting them here is what makes them
+      survive `ludus-server --update`, which reverts every stock file.
+      Both ERR-13 entries were re-derived at the same time. Their previous
+      `stock` text began "(nodecheck.rc | default(1)) == 0", which `git log -S`
+      shows has never existed in upstream Ludus in any commit — it described an
+      intermediate hand-edited state on the scraped server. On a genuinely stock
+      tree the role therefore aborted at its FIRST patch and applied none of the
+      others. ERR-22/ualsvc-rescue was separately inert: its marker was a
+      substring of what ERR-22/ualsvc-block writes, so it always reported
+      "already applied" while the final verification passed on the other
+      patch's text.
+      ERR-22/ualsvc-rescue stock text was re-derived on 2026-08-03 against the
+      2.3.0 server binary (02a3ffc8). The 2026-08-02 re-derivation incorrectly
+      used the task name from upstream commit f8d0295 (tag 2.3.1): "blocking AppX
+      packages". The running server binary is 2.3.0+02a3ffc8, which still carries
+      "blocking Edge packages" — confirmed by the issue
+      of the AppX form in the installed tree). The manifest is now pinned to
+      tag-2.3.0. The `commit` field carries the 8-char build hash from the server
+      version string; for check-patches.py validation, check the upstream clone
+      out at the git tag `2.3.0`.
+verify: |
+  git clone https://gitlab.com/badsectorlabs/ludus /tmp/ludus-upstream
+  git -C /tmp/ludus-upstream checkout 2.3.0
+  python3 scripts/check-patches.py
+update: |
+  git -C /tmp/ludus-upstream fetch --tags
+  python3 scripts/check-patches.py

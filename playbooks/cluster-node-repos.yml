@@ -1,0 +1,265 @@
+---
+- name: "Configure apt repositories on all Proxmox cluster nodes"
+  hosts: proxmox_cluster
+  gather_facts: false
+  become: false
+  serial: 1
+  tasks:
+    - name: "Fact-find: this node's Debian suite (never hardcode the codename)"
+      ansible.builtin.shell:
+        cmd: . /etc/os-release && echo "$VERSION_CODENAME"
+        executable: /bin/bash
+      register: __codename_raw
+      changed_when: false
+      check_mode: false
+    - name: "Fact-find: record the suite"
+      ansible.builtin.set_fact:
+        __os_codename: "{{ __codename_raw.stdout | trim }}"
+    - name: "Fact-find: does each managed repo file exist, and what is its mode/digest?"
+      ansible.builtin.stat:
+        path: "{{ node_repos_sources_dir }}/{{ item.name }}"
+        checksum_algorithm: sha256
+      loop: "{{ node_repos_managed_files }}"
+      loop_control: { label: "{{ item.name }}" }
+      register: __repo_stat
+      check_mode: false
+    - name: "Fact-find: capture the CONTENT of every managed repo file that exists"
+      ansible.builtin.slurp:
+        src: "{{ item.stat.path }}"
+      loop: "{{ __repo_stat.results }}"
+      loop_control: { label: "{{ item.item.name }}" }
+      when: item.stat.exists
+      register: __repo_slurp
+      check_mode: false
+    - name: "Fact-find: is some OTHER file already providing the PVE repo?"
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          grep -rl "{{ node_repos_pve_component }}" {{ node_repos_sources_dir }}/ 2>/dev/null \
+            | grep -v pve-no-subscription.sources || true
+        executable: /bin/bash
+      register: __existing_pve_repo
+      changed_when: false
+      check_mode: false
+    - name: "Fact-find: index the captured prior state per file"
+      ansible.builtin.set_fact:
+        __prior_files: >-
+          {{ __prior_files | default({}) | combine({ item.0.item.name: {
+               'path': node_repos_sources_dir ~ '/' ~ item.0.item.name,
+               'existed': item.0.stat.exists,
+               'mode': item.0.stat.mode | default('0644'),
+               'owner': item.0.stat.pw_name | default('root'),
+               'group': item.0.stat.gr_name | default('root'),
+               'sha256': item.0.stat.checksum | default(''),
+               'b64': item.1.content | default(''),
+               'captured': item.1.content is defined } }) }}
+      loop: "{{ __repo_stat.results | zip(__repo_slurp.results) | list }}"
+      loop_control: { label: "{{ item.0.item.name }}" }
+    - name: "Fact-find: report the prior state a rescue would put back"
+      ansible.builtin.debug:
+        msg: |-
+          {{ inventory_hostname }} suite={{ __os_codename }}
+          managed repo files, as found BEFORE any change:
+          {% for n, f in __prior_files.items() %}
+            {{ n }}: {{ ('present, mode ' ~ f.mode ~ ', sha256 ' ~ f.sha256[:12] ~ '…, ' ~ (f.b64 | b64decode | length) ~ ' bytes captured')
+                         if f.existed else 'ABSENT (rescue would delete it again)' }}
+          {% endfor %}
+          other file(s) already providing {{ node_repos_pve_component }}:
+          {{ __existing_pve_repo.stdout_lines | default([]) | join(', ') or '(none)' }}
+    - name: "Note that an existing PVE repo is being deferred to"
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: leaving {{ __existing_pve_repo.stdout_lines | join(', ') }}
+          in place (already provides {{ node_repos_pve_component }}); not writing our own to
+          avoid a Signed-By conflict.
+      when: __existing_pve_repo.stdout | length > 0
+    - name: "Preflight: every managed file was successfully inspected"
+      ansible.builtin.assert:
+        that:
+          - __os_codename | length > 0
+          - __prior_files | length == node_repos_managed_files | length
+          - __prior_files.values() | selectattr('existed') | rejectattr('captured') | list | length == 0
+        success_msg: >-
+          Prior state captured for all {{ __prior_files | length }} managed files
+          ({{ __prior_files.values() | selectattr('existed') | list | length }} present,
+          {{ __prior_files.values() | rejectattr('existed') | list | length }} absent) on suite {{ __os_codename }}.
+        fail_msg: >-
+          Refusing to change apt repos: the prior state of at least one managed file
+          could not be read, so it could not be put back on failure. captured={{ __prior_files | default({}) | length }}
+          of {{ node_repos_managed_files | length }}, suite='{{ __os_codename | default('') }}'.
+    - name: "Back up the existing sources.list.d once (never overwrite a prior backup)"
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          if [ ! -d /root/apt-sources.bak ]; then
+            cp -a {{ node_repos_sources_dir }} /root/apt-sources.bak
+            echo "backed up"
+          else
+            echo "backup already present"
+          fi
+        executable: /bin/bash
+      register: __repo_backup
+      changed_when: "'backed up' in __repo_backup.stdout"
+    - name: "Apply the repo policy, prove apt is clean, and put the files back if it is not"
+      block:
+        - name: "Remove enterprise PVE repo files (the 401 source)"
+          ansible.builtin.file:
+            path: "{{ node_repos_sources_dir }}/{{ item }}"
+            state: absent
+          loop:
+            - pve-enterprise.sources
+            - pve-enterprise.list
+          register: __removed_repos
+        - name: "Declare the PVE no-subscription repository"
+          ansible.builtin.copy:
+            dest: "{{ node_repos_sources_dir }}/pve-no-subscription.sources"
+            owner: root
+            group: root
+            mode: "0644"
+            content: |
+              Types: deb
+              URIs: {{ node_repos_pve_uri }}
+              Suites: {{ __os_codename }}
+              Components: {{ node_repos_pve_component }}
+              Signed-By: {{ node_repos_keyring }}
+          when: __existing_pve_repo.stdout | length == 0
+          register: __pve_repo
+        - name: "Remove our file if another source now provides the repo"
+          ansible.builtin.file:
+            path: "{{ node_repos_sources_dir }}/pve-no-subscription.sources"
+            state: absent
+          when: __existing_pve_repo.stdout | length > 0
+          register: __pve_repo_cleanup
+        - name: "Declare the Ceph repository"
+          ansible.builtin.copy:
+            dest: "{{ node_repos_sources_dir }}/ceph.sources"
+            owner: root
+            group: root
+            mode: "0644"
+            content: |
+              Types: deb
+              URIs: {{ node_repos_ceph_uri }}
+              Suites: {{ __os_codename }}
+              Components: {{ node_repos_ceph_component }}
+              Signed-By: {{ node_repos_keyring }}
+          when: node_repos_manage_ceph | bool
+          register: __ceph_repo
+        - name: "Refresh the apt cache"
+          ansible.builtin.apt:
+            update_cache: true
+          when: >-
+            __removed_repos is changed or __pve_repo is changed
+            or __pve_repo_cleanup is changed or __ceph_repo is changed
+        # Liveness probe, not a package op: asserts apt update exits clean and its
+        # stderr carries no 401 / unsigned-repo error — no module surfaces that.
+        - name: "Post-check: apt update is clean (no 401 / unsigned repo)"  # noqa: command-instead-of-module
+          ansible.builtin.command: apt-get update
+          register: __apt_check
+          changed_when: false
+          failed_when: >-
+            __apt_check.rc != 0
+            or ('401' in __apt_check.stderr)
+            or ('is not signed' in __apt_check.stderr)
+        # apt-cache policy is a read-only candidate-version query; no module equivalent, changed_when:false.
+        - name: "Post-check: which Ceph release do the packages resolve to?"  # noqa: command-instead-of-module
+          ansible.builtin.shell:
+            cmd: set -o pipefail; apt-cache policy ceph-osd | awk '/Candidate/{print $2}'
+            executable: /bin/bash
+          register: __ceph_ver
+          changed_when: false
+        - name: "Report the resolved Ceph version per node"
+          ansible.builtin.debug:
+            msg: >-
+              {{ inventory_hostname }}: ceph-osd candidate {{ __ceph_ver.stdout | default('none') }}
+        - name: "POST-CHECK: this node resolves a Ceph candidate"
+          ansible.builtin.assert:
+            that:
+              - __ceph_ver.stdout | length > 0
+              - __ceph_ver.stdout != '(none)'
+            success_msg: "{{ inventory_hostname }}: apt clean, ceph-osd candidate {{ __ceph_ver.stdout }}."
+            fail_msg: >-
+              {{ inventory_hostname }} has no ceph-osd candidate — the Ceph repo is
+              not configured correctly on this node.
+          when: node_repos_manage_ceph | bool
+      rescue:
+        - name: "Rescue: restore the bytes of every file that EXISTED before this run"
+          ansible.builtin.copy:
+            content: "{{ item.value.b64 | b64decode }}"
+            dest: "{{ item.value.path }}"
+            owner: "{{ item.value.owner }}"
+            group: "{{ item.value.group }}"
+            mode: "{{ item.value.mode }}"
+          loop: "{{ __prior_files | dict2items | selectattr('value.existed') | list }}"
+          loop_control: { label: "{{ item.key }} <- {{ item.value.sha256[:12] }}… ({{ item.value.mode }})" }
+          register: __restore_present
+          failed_when: false
+        - name: "Rescue: delete every file that did NOT exist before this run"
+          ansible.builtin.file:
+            path: "{{ item.value.path }}"
+            state: absent
+          loop: "{{ __prior_files | dict2items | rejectattr('value.existed') | list }}"
+          loop_control: { label: "{{ item.key }} <- back to ABSENT" }
+          register: __restore_absent
+          failed_when: false
+        - name: "Rescue verify: re-stat every managed file"
+          ansible.builtin.stat:
+            path: "{{ item.value.path }}"
+            checksum_algorithm: sha256
+          loop: "{{ __prior_files | dict2items }}"
+          loop_control: { label: "{{ item.key }}" }
+          register: __restore_stat
+          check_mode: false
+          failed_when: false
+        - name: "Rescue verify: compare, file by file, what came back against what was captured"
+          ansible.builtin.set_fact:
+            __file_verdicts: >-
+              {{ __file_verdicts | default([]) + [{
+                   'file': item.item.key,
+                   'was': ('sha256 ' ~ item.item.value.sha256[:12] ~ '… ' ~ item.item.value.mode
+                           ~ ' ' ~ item.item.value.owner ~ ':' ~ item.item.value.group)
+                          if item.item.value.existed else 'ABSENT',
+                   'now': ('sha256 ' ~ (item.stat.checksum | default('?'))[:12] ~ '… ' ~ (item.stat.mode | default('?'))
+                           ~ ' ' ~ (item.stat.pw_name | default('?')) ~ ':' ~ (item.stat.gr_name | default('?')))
+                          if item.stat.exists | default(false) else 'ABSENT',
+                   'ok': (item.stat.exists | default(false)) == item.item.value.existed
+                         and (((item.stat.checksum | default('')) == item.item.value.sha256
+                               and (item.stat.mode | default('')) == item.item.value.mode
+                               and (item.stat.pw_name | default('')) == item.item.value.owner
+                               and (item.stat.gr_name | default('')) == item.item.value.group)
+                              if item.item.value.existed else true) }] }}
+          loop: "{{ __restore_stat.results }}"
+          loop_control: { label: "{{ item.item.key }}" }
+        # deliberate rescue cache rebuild; rc is inspected by the rollback report, which the apt module hides.
+        - name: "Rescue: rebuild the apt cache against the restored files"  # noqa: command-instead-of-module
+          ansible.builtin.command: apt-get update
+          register: __restore_apt
+          changed_when: false
+          failed_when: false
+        - name: "Rescue verify: the rollback verdict"
+          ansible.builtin.set_fact:
+            __restore_verdict: "{{ (__file_verdicts | rejectattr('ok') | list | length) == 0 }}"
+        # yamllint disable rule:line-length
+        - name: "Rescue: fail reporting the original error AND the rollback verdict"
+          ansible.builtin.fail:
+            msg: |-
+              APT REPO CHANGE FAILED ON {{ inventory_hostname }}{{ ' AND WAS ROLLED BACK' if __restore_verdict | bool else ' — ROLLBACK INCOMPLETE' }}.
+              (1) ORIGINAL FAILURE — task '{{ ansible_failed_task.name | default('unknown') }}':
+                  {{ ansible_failed_result.msg | default(ansible_failed_result) | default('(no result captured)') }}
+                  {{ (ansible_failed_result.stderr | default('')) | truncate(600) }}
+              (2) ROLLBACK: {{ "VERIFIED — every managed file was re-read and matches what the fact-find captured."
+                               if __restore_verdict | bool else
+                               "NOT VERIFIED — at least one managed file does NOT match what was captured, so the
+                                apt configuration on this node is in an UNKNOWN state and needs manual inspection." }}
+              {% for v in __file_verdicts %}
+                  {{ 'OK  ' if v.ok else 'FAIL' }} {{ v.file }}: captured={{ v.was }} now={{ v.now }}
+              {% endfor %}
+                  restore write rcs: present={{ __restore_present.results | default([]) | selectattr('failed', 'defined') | map(attribute='failed') | list }}
+                                     absent={{ __restore_absent.results | default([]) | selectattr('failed', 'defined') | map(attribute='failed') | list }}
+                  apt cache rebuilt against the restored files: {{ 'yes' if __restore_apt.rc == 0 else 'NO (apt-get update rc=' ~ __restore_apt.rc ~ ') — the cache does not match the files on disk' }}
+              (3) NOT ROLLED BACK BY DESIGN:
+                  - the apt cache (no previous cache exists to restore; it is rebuilt instead)
+                  - /root/apt-sources.bak, which is a once-only first-run snapshot and is
+                    deliberately NOT used as a rollback source — restoring months-old repo
+                    state would be worse than leaving the node as-is
+                  - any node earlier in the serial:1 order whose post-check already PASSED
+        # yamllint enable rule:line-length

@@ -1,0 +1,17 @@
+---
+# ensure-default-sources: the Ludus role/collection sources every range needs,
+# registered for the owner identity, and any retired source to remove.
+# Copied into place by `make config`; the copy is untracked.
+default_sources_owner: RA
+default_sources_org_slug: get-sybers
+default_sources_ref: main
+# One entry per git source: the slug becomes part of the Ludus sourceID
+# (<owner>-<org slug>-<slug>). CHANGE-ME entries stand for your own sources.
+default_sources:
+  - { slug: fgnw, url: "https://github.com/Get-Sybers/FGNW.git" }
+  - { slug: proxmaxxing, url: "https://github.com/Get-Sybers/proxmaxxing.git" }
+  - { slug: CHANGE-ME, url: "https://github.com/CHANGE-ME/CHANGE-ME.git" }
+# A case-insensitive substring of a retired source's URL to purge (empty for
+# none), and explicit sourceIDs to purge.
+default_sources_remove_url_match: ""
+default_sources_remove_ids: []

@@ -1,0 +1,16 @@
+---
+ancestor: null
+releases:
+  0.1.0:
+    changes:
+      release_summary: >-
+        Initial import of the collection. This entry was seeded by hand when
+        antsibull-changelog became the generator of ``CHANGELOG.md``; it carries
+        the ``0.1.0`` notes of the previously hand-written Keep a Changelog file.
+      added:
+        - >-
+          Initial ``get_sybers.cluster`` collection: Ceph mesh/tuning/diagnostics,
+          SDN zone/VNet setup, audit-logging enforcement, node repository
+          management, storage network configuration, Ludus auth/credential
+          handling, and PCT/packer patching.
+    release_date: '2026-08-25'

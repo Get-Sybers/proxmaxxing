@@ -1,0 +1,33 @@
+---
+- name: Converge (expect a controlled failure)
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: A host with no Ludus install and the installer off must refuse
+      block:
+        - name: Run cluster_ludus_install against an empty root
+          ansible.builtin.include_role:
+            name: get_sybers.cluster.cluster_ludus_install
+          vars:
+            cluster_ludus_install_root: /tmp/ludus-absent
+            cluster_ludus_install_run_installer: false
+      rescue:
+        - name: The role stopped at its install guard
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result is defined
+              - "'No Ludus install found' in (ansible_failed_result.msg | default(''))"
+            fail_msg: >-
+              failed, but not at the install guard:
+              {{ ansible_failed_result | default({}) }}
+            quiet: true
+        - name: Record the controlled failure
+          ansible.builtin.set_fact:
+            __cli_failed_cleanly: true
+    - name: The failure path was taken
+      ansible.builtin.assert:
+        that:
+          - __cli_failed_cleanly | default(false)
+        fail_msg: "cluster_ludus_install did not refuse when no install was present"
+        quiet: true

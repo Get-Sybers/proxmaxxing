@@ -1,0 +1,89 @@
+---
+- name: "install_one | Find the pinned binary | {{ plugin.source ~ ' v' ~ plugin.version }}"
+  ansible.builtin.find:
+    paths: "{{ cluster_plugin_packer_root }}/{{ plugin.source }}"
+    patterns: "packer-plugin-{{ plugin.source | basename }}_v{{ plugin.version }}_*"
+    excludes: "*_SHA256SUM"
+    file_type: file
+  register: __pp_bin
+  check_mode: false
+- name: "install_one | {{ plugin.source ~ ' v' ~ plugin.version }}"
+  ansible.builtin.set_fact:
+    __pp_present: "{{ __pp_bin.files | length > 0 }}"
+- name: "install_one | {{ plugin.source ~ ' v' ~ plugin.version }}"
+  when: __pp_present
+  block:
+    - name: "install_one | Its SHA256SUM record must exist | {{ plugin.source ~ ' v' ~ plugin.version }}"
+      ansible.builtin.stat:
+        path: "{{ (__pp_bin.files | first).path }}_SHA256SUM"
+      register: __pp_sha_stat
+      check_mode: false
+    - name: "install_one | {{ plugin.source ~ ' v' ~ plugin.version }}"
+      ansible.builtin.assert:
+        that: __pp_sha_stat.stat.exists
+        fail_msg: >-
+          {{ (__pp_bin.files | first).path }} exists but its _SHA256SUM record
+          does not, so it cannot be verified. This role never deletes or
+          overwrites — investigate how the record was lost before re-running.
+        quiet: true
+    - name: "install_one | {{ plugin.source ~ ' v' ~ plugin.version }}"
+      ansible.builtin.slurp:
+        src: "{{ (__pp_bin.files | first).path }}_SHA256SUM"
+      register: __pp_sha_rec
+      check_mode: false
+    - name: "install_one | {{ plugin.source ~ ' v' ~ plugin.version }}"
+      ansible.builtin.stat:
+        path: "{{ (__pp_bin.files | first).path }}"
+        checksum_algorithm: sha256
+      register: __pp_sha_act
+      check_mode: false
+    - name: "install_one | {{ plugin.source ~ ' v' ~ plugin.version }}"
+      ansible.builtin.assert:
+        that: >-
+          (__pp_sha_rec.content | b64decode | trim | split | first)
+          == __pp_sha_act.stat.checksum
+        fail_msg: >-
+          CHECKSUM MISMATCH for {{ (__pp_bin.files | first).path }}:
+          recorded {{ __pp_sha_rec.content | b64decode | trim | split | first }},
+          actual {{ __pp_sha_act.stat.checksum }}. The binary on disk is not the
+          one packer recorded — corruption or tampering. This role never
+          deletes or overwrites; investigate before re-running.
+        quiet: true
+    - name: "install_one | {{ plugin.source ~ ' v' ~ plugin.version }}"
+      ansible.builtin.debug:
+        msg: >-
+          {{ (__pp_bin.files | first).path }} present, sha256 verified — nothing
+          to do.
+- name: "install_one | {{ plugin.source ~ ' v' ~ plugin.version }}"
+  when: not __pp_present
+  block:
+    - name: "install_one | Packer plugins install | {{ plugin.source ~ ' v' ~ plugin.version }}"
+      ansible.builtin.command:
+        argv:
+          - packer
+          - plugins
+          - install
+          - "{{ plugin.source }}"
+          - "v{{ plugin.version }}"
+      environment:
+        PACKER_PLUGIN_PATH: "{{ cluster_plugin_packer_root }}"
+      register: __pp_install
+      changed_when: true
+    - name: "install_one | {{ plugin.source ~ ' v' ~ plugin.version }}"
+      ansible.builtin.find:
+        paths: "{{ cluster_plugin_packer_root }}/{{ plugin.source }}"
+        patterns: "packer-plugin-{{ plugin.source | basename }}_v{{ plugin.version }}_*"
+        excludes: "*_SHA256SUM"
+        file_type: file
+      register: __pp_bin_post
+      check_mode: false
+    - name: "install_one | {{ plugin.source ~ ' v' ~ plugin.version }}"
+      ansible.builtin.assert:
+        that: __pp_bin_post.files | length > 0
+        fail_msg: >-
+          `packer plugins install {{ plugin.source }} v{{ plugin.version }}`
+          reported rc=0 but no matching binary exists under
+          {{ cluster_plugin_packer_root }}/{{ plugin.source }}. The plugin
+          landed somewhere else or not at all — do not trust this install.
+        quiet: true
+      when: not ansible_check_mode

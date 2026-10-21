@@ -1,0 +1,33 @@
+---
+- name: "record_list | Fetch all records"
+  ansible.builtin.uri:
+    url: "{{ cluster_pb_store_base_url }}/api/collections/{{ cluster_pb_store_collection_name }}/records?perPage=500"
+    method: GET
+    headers:
+      Authorization: "{{ __pb_super_token }}"
+    validate_certs: "{{ cluster_pb_store_validate_certs }}"
+    status_code: [200]
+  register: __pb_record_listing
+  no_log: true
+  check_mode: false
+  changed_when: false
+- name: "record_list | Assert the single page holds the whole collection"
+  ansible.builtin.assert:
+    that: __pb_record_listing.json.totalItems == (__pb_record_listing.json['items'] | length)
+    fail_msg: >-
+      Collection {{ cluster_pb_store_collection_name }} holds
+      {{ __pb_record_listing.json.totalItems }} records — more than one page.
+      Raise perPage in record_list.yml before trusting any iteration over it.
+    quiet: true
+  no_log: true
+- name: "record_list | Derive facts (items no_log; ids and count are handles)"
+  ansible.builtin.set_fact:
+    __pb_record_count: "{{ __pb_record_listing.json['items'] | length }}"
+    __pb_record_ids: "{{ __pb_record_listing.json['items'] | map(attribute='id') | list }}"
+    __pb_record_items: "{{ __pb_record_listing.json['items'] }}"
+  no_log: true
+- name: "record_list | Report COUNT only"
+  ansible.builtin.debug:
+    msg: >-
+      Collection '{{ cluster_pb_store_collection_name }}' holds
+      {{ __pb_record_count }} record(s).

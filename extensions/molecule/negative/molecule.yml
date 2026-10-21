@@ -1,0 +1,15 @@
+---
+# Negative scenario — a missing required secret must resolve to the role's own
+# labelled assertion, never an uncaught crash (docs/02 §12). Tier A.
+#
+# Driver/substrate/provisioner come from ../config.yml. The only override is the
+# sequence: there is no prepare (the secret is deliberately absent) and no
+# separate verify (converge.yml drives the failure through a block/rescue and
+# asserts the controlled outcome itself), so idempotence/verify do not apply.
+scenario:
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - converge
+    - destroy

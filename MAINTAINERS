@@ -1,0 +1,12 @@
+Before opening a pull request, read CONTRIBUTING.md: every commit is signed,
+every pull request passes `make conform`, and a change to the configuration
+template or to the plugins is reviewed by the owners.
+
+Maintainer
+----------
+
+Committers              : the @get-sybers/owners team (see .github/CODEOWNERS)
+Send pull requests at   : https://github.com/get-sybers/proxmaxxing
+Report vulnerabilities  : Security → Report a vulnerability on the repository (see SECURITY.md)
+Git location            : https://github.com/get-sybers/proxmaxxing
+Collection              : get_sybers.cluster on Ansible Galaxy

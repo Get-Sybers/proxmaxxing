@@ -1,0 +1,17 @@
+---
+- name: "record_delete | Delete record id {{ cluster_pb_store_record_id }}"
+  ansible.builtin.uri:
+    url: "{{ cluster_pb_store_base_url }}/api/collections/{{ cluster_pb_store_collection_name }}/records/{{ cluster_pb_store_record_id }}"
+    method: DELETE
+    headers:
+      Authorization: "{{ __pb_super_token }}"
+    validate_certs: "{{ cluster_pb_store_validate_certs }}"
+    status_code: [204]
+  register: __pb_record_del
+  no_log: true
+  changed_when: true
+- name: "record_delete | Report"
+  ansible.builtin.debug:
+    msg: >-
+      Record id {{ cluster_pb_store_record_id }} deleted from
+      {{ cluster_pb_store_collection_name }} (HTTP {{ __pb_record_del.status }}).

@@ -1,0 +1,165 @@
+---
+- name: "gather_node | The play must have gathered the min, hardware and network facts"
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['kernel'] is defined
+      - ansible_facts['memtotal_mb'] is defined
+      - ansible_facts['hostname'] is defined
+    fail_msg: >-
+      cluster_discover needs the min, hardware and network fact subsets; run it
+      from a play with gather_facts: true (playbooks/cluster-discover.yml does).
+    quiet: true
+
+- name: "gather_node | Read the PVE version"
+  ansible.builtin.command:
+    argv: [pvesh, get, /version, --output-format, json]
+  register: __cd_version
+  changed_when: false
+  check_mode: false
+
+- name: "gather_node | Read the corosync node table"
+  ansible.builtin.command:
+    argv: [pvesh, get, /cluster/config/nodes, --output-format, json]
+  register: __cd_corosync
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: "gather_node | List the block devices"
+  ansible.builtin.command:
+    argv: [lsblk, --json, --nodeps, --output, "NAME,SIZE,MODEL,SERIAL,TRAN,ROTA,TYPE"]
+  register: __cd_lsblk
+  changed_when: false
+  check_mode: false
+
+- name: "gather_node | List the ZFS pools"
+  ansible.builtin.command:
+    argv: [zpool, list, -H, -o, "name,size,capacity,health"]
+  register: __cd_zpool
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: "gather_node | Read the interfaces with their addresses and link kinds"
+  ansible.builtin.command:
+    argv: [ip, -j, -d, addr, show]
+  register: __cd_ip
+  changed_when: false
+  check_mode: false
+
+- name: "gather_node | List the QEMU guests on this node"
+  ansible.builtin.command:
+    argv: [pvesh, get, "/nodes/{{ ansible_facts['hostname'] }}/qemu", --output-format, json]
+  register: __cd_qemu
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: "gather_node | List the LXC guests on this node"
+  ansible.builtin.command:
+    argv: [pvesh, get, "/nodes/{{ ansible_facts['hostname'] }}/lxc", --output-format, json]
+  register: __cd_lxc
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: "gather_node | Shape each disk record"
+  ansible.builtin.set_fact:
+    __cd_disks: >-
+      {{ __cd_disks | default([]) + [{
+           'dev': __cd_disk.name,
+           'size': __cd_disk.size,
+           'model': (__cd_disk.model | default('', true) | trim) or none,
+           'serial': (__cd_disk.serial | default('', true) | trim) or none,
+           'transport': __cd_disk.tran | default(none),
+           'rotational': __cd_disk.rota | default(none) }] }}
+  loop: "{{ (__cd_lsblk.stdout | from_json).blockdevices | selectattr('type', 'eq', 'disk') | list }}"
+  loop_control:
+    loop_var: __cd_disk
+    label: "{{ __cd_disk.name }}"
+
+- name: "gather_node | Shape each ZFS pool record"
+  ansible.builtin.set_fact:
+    __cd_zpools: >-
+      {{ __cd_zpools | default([]) + [{
+           'name': __cd_pool.split()[0],
+           'size': __cd_pool.split()[1],
+           'cap': __cd_pool.split()[2],
+           'health': __cd_pool.split()[3] }] }}
+  loop: "{{ __cd_zpool.stdout_lines if __cd_zpool.rc == 0 else [] }}"
+  loop_control:
+    loop_var: __cd_pool
+    label: "{{ __cd_pool.split()[0] }}"
+
+- name: "gather_node | Index the interface table"
+  ansible.builtin.set_fact:
+    __cd_ifaces: "{{ __cd_ip.stdout | from_json }}"
+
+- name: "gather_node | Shape each interface record"
+  ansible.builtin.set_fact:
+    __cd_network: >-
+      {{ __cd_network | default({}) | combine({__cd_if.ifname: ({
+           'ip': ((__cd_addr.local ~ '/' ~ __cd_addr.prefixlen) if __cd_addr else none),
+           'type': __cd_if.linkinfo.info_kind | default(__cd_if.link_type),
+           'mtu': __cd_if.mtu | default(none),
+           'state': __cd_if.operstate | default(none) }
+           | combine({'ports': __cd_ports} if __cd_ports | length > 0 else {})) }) }}
+  vars:
+    __cd_addr: >-
+      {{ (__cd_if.addr_info | default([]) | selectattr('family', 'eq', 'inet')
+          | selectattr('scope', 'eq', 'global') | list)[0] | default({}) }}
+    __cd_ports: >-
+      {{ __cd_ifaces | selectattr('master', 'defined') | selectattr('master', 'eq', __cd_if.ifname)
+         | map(attribute='ifname') | reject('match', cluster_discover_iface_ignore) | sort }}
+  loop: "{{ __cd_ifaces | rejectattr('ifname', 'match', cluster_discover_iface_ignore) | list }}"
+  loop_control:
+    loop_var: __cd_if
+    label: "{{ __cd_if.ifname }}"
+
+- name: "gather_node | Shape each guest record"
+  ansible.builtin.set_fact:
+    __cd_guest_list: >-
+      {{ __cd_guest_list | default([]) + [{
+           'kind': 'template' if (__cd_guest.template | default(0) | int) == 1 else __cd_guest.kind,
+           'id': __cd_guest.vmid | int,
+           'name': __cd_guest.name | default(none),
+           'status': __cd_guest.status | default(none) }] }}
+  loop: >-
+    {{ (((__cd_qemu.stdout | from_json) if __cd_qemu.rc == 0 else []) | map('combine', {'kind': 'vm'}) | list)
+       + (((__cd_lxc.stdout | from_json) if __cd_lxc.rc == 0 else []) | map('combine', {'kind': 'ct'}) | list) }}
+  loop_control:
+    loop_var: __cd_guest
+    label: "{{ __cd_guest.kind }} {{ __cd_guest.vmid }}"
+
+- name: "gather_node | Assemble this node's record"
+  ansible.builtin.set_fact:
+    cluster_discover_node_facts:
+      name: "{{ inventory_hostname }}"
+      mgmt_ip: "{{ __cd_me.ring0_addr | default(none) }}"
+      corosync_id: "{{ __cd_me.nodeid | default(none) }}"
+      quorum_votes: "{{ __cd_me.quorum_votes | default(none) }}"
+      pve_version: "pve-manager/{{ __cd_ver.version }}/{{ __cd_ver.repoid }}"
+      kernel: "{{ ansible_facts['kernel'] }}"
+      hardware:
+        cpu: "{{ (ansible_facts['processor'] | default([]))[2] | default(none) }}"
+        cpus: "{{ ansible_facts['processor_vcpus'] | default(none) }}"
+        mem_total_mb: "{{ ansible_facts['memtotal_mb'] | default(none) }}"
+      disks: "{{ __cd_disks | default([]) }}"
+      zfs_pools: "{{ __cd_zpools | default([]) }}"
+      network: "{{ __cd_network | default({}) }}"
+      guests:
+        templates: >-
+          {{ __cd_guests | selectattr('kind', 'eq', 'template') | map('dict2items')
+             | map('rejectattr', 'key', 'eq', 'kind') | map('items2dict') | sort(attribute='id') }}
+        vms: >-
+          {{ __cd_guests | selectattr('kind', 'eq', 'vm') | map('dict2items')
+             | map('rejectattr', 'key', 'eq', 'kind') | map('items2dict') | sort(attribute='id') }}
+        cts: >-
+          {{ __cd_guests | selectattr('kind', 'eq', 'ct') | map('dict2items')
+             | map('rejectattr', 'key', 'eq', 'kind') | map('items2dict') | sort(attribute='id') }}
+  vars:
+    __cd_ver: "{{ __cd_version.stdout | from_json }}"
+    __cd_me: >-
+      {{ (((__cd_corosync.stdout | from_json) if __cd_corosync.rc == 0 else [])
+          | selectattr('name', 'eq', ansible_facts['hostname']) | list)[0] | default({}) }}
+    __cd_guests: "{{ __cd_guest_list | default([]) }}"

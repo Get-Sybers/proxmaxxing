@@ -1,0 +1,8 @@
+---
+# Fast storage links (cluster-storage-net.yml). The per-host link topology is
+# storage_links in host_vars/<host>/storage_net.yml; these are the files the
+# play writes on every node (captured before, restored on failure).
+storage_net_managed_files:
+  - /etc/modules-load.d/thunderbolt-net.conf
+  - /etc/udev/rules.d/90-storage-net-hotplug.rules
+  - /etc/network/interfaces.d/storage-net

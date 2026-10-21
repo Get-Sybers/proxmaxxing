@@ -1,0 +1,8 @@
+---
+- name: "Sweep orphaned RBD disks left by cfs-lock-timed-out qmdestroy (ERR-20 /"
+  hosts: proxmox_master
+  gather_facts: true
+  serial: 1
+  max_fail_percentage: 0
+  roles:
+    - role: get_sybers.cluster.cluster_ceph_orphan_sweep

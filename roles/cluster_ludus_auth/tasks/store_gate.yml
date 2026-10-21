@@ -1,0 +1,10 @@
+---
+- name: "store_gate | Assert gs_infra_credentials exists with the ruled ACLs"
+  ansible.builtin.assert:
+    that:
+      - __pb_collection_present | bool
+      - __pb_collection_rules_match | bool
+    fail_msg: >-
+      gs_infra_credentials is absent or its API rules have drifted from the
+      trusting reads from it.
+    quiet: true

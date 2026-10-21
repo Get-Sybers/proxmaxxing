@@ -1,0 +1,68 @@
+---
+argument_specs:
+  main:
+    short_description: "Ensure the gs_infra_credentials PocketBase collection exists with the ruled API rules, under no_log."
+    description:
+      - >-
+        The ensure-collection path: preflight the superadmin surface,
+        authenticate as the PB superuser, fact-find the collection, create it
+        when absent or reconcile drifted rules, then re-probe and verify. The
+        record_* options below parameterise the record primitive entry points
+        (record_write/read/update/delete/...); callers set them at the include
+        site. Values carrying secrets are no_log.
+    options:
+      cluster_pb_store_base_url:
+        type: str
+        required: false
+        default: "https://127.0.0.1:8080"
+        description: "The Ludus/PocketBase server as seen from the node the play runs on."
+      cluster_pb_store_validate_certs:
+        type: bool
+        required: false
+        default: false
+        description: "Whether to validate the service TLS certificate (self-signed, so false)."
+      cluster_pb_store_superuser_identity:
+        type: str
+        required: false
+        default: "root@ludus.internal"
+        description: "PB superuser identity Ludus creates with the ROOT API key as password."
+      cluster_pb_store_collection_name:
+        type: str
+        required: false
+        default: "gs_infra_credentials"
+        description: "The collection ensured/operated on. Collection-agnostic primitives override this at the include site."
+      cluster_pb_store_collection_rules:
+        type: dict
+        required: false
+        default:
+          listRule: "@request.auth.isAdmin = true"
+          viewRule: "@request.auth.isAdmin = true"
+          createRule: null
+          updateRule: null
+          deleteRule: null
+        description: "API rules enforced on the collection: admins read; create/update/delete are superuser-only (null)."
+      cluster_pb_store_record_name:
+        type: str
+        required: false
+        default: ""
+        description: "Record name for the record_write/record_read/record_delete primitives."
+      cluster_pb_store_record_value:
+        type: str
+        required: false
+        default: ""
+        description: "Record value (SECRET — callers set it from a no_log fact) for record_write."
+      cluster_pb_store_record_note:
+        type: str
+        required: false
+        default: ""
+        description: "Optional note stored with a written record."
+      cluster_pb_store_record_id:
+        type: str
+        required: false
+        default: ""
+        description: "Record id for the by-id primitives (record_read_id/record_update/record_patch_fields/record_delete)."
+      cluster_pb_store_record_fields:
+        type: dict
+        required: false
+        default: {}
+        description: "Field -> value map for record_patch_fields (SECRET — may carry record values)."

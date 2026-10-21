@@ -1,0 +1,37 @@
+---
+- name: "auth_superuser | Fetch the ROOT key from the vault (cluster_secrets)"
+  ansible.builtin.include_role:
+    name: get_sybers.cluster.cluster_secrets
+    tasks_from: ludus_root_key
+- name: "auth_superuser | Authenticate as {{ cluster_pb_store_superuser_identity }}"
+  ansible.builtin.uri:
+    url: "{{ cluster_pb_store_base_url }}/api/collections/_superusers/auth-with-password"
+    method: POST
+    body_format: json
+    body:
+      identity: "{{ cluster_pb_store_superuser_identity }}"
+      password: "{{ cluster_secrets_ludus_root_api_key }}"
+    validate_certs: "{{ cluster_pb_store_validate_certs }}"
+    status_code: [200]
+  register: __pb_super_auth
+  no_log: true
+  check_mode: false
+  changed_when: false
+- name: "auth_superuser | Register the superuser token (no_log)"
+  ansible.builtin.set_fact:
+    __pb_super_token: "{{ __pb_super_auth.json.token }}"
+  no_log: true
+- name: "auth_superuser | Assert a usable token was issued"
+  ansible.builtin.assert:
+    that: __pb_super_token | length > 0
+    fail_msg: >-
+      PB superuser auth returned 200 but no token. The superuser record for
+      {{ cluster_pb_store_superuser_identity }} may be damaged — inspect via the
+      superadmin UI (see docs/administration/pocketbase.md).
+    quiet: true
+  no_log: true
+- name: "auth_superuser | Report SHAPE only"
+  ansible.builtin.debug:
+    msg: >-
+      PB superuser token obtained for {{ cluster_pb_store_superuser_identity }}
+      (length={{ __pb_super_token | length }}).

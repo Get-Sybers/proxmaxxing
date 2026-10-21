@@ -1,0 +1,13 @@
+---
+- name: "report_auth | Report the authentication result (shape only)"
+  ansible.builtin.debug:
+    msg:
+      identity: "{{ cluster_ludus_auth_identity }}"
+      key_source: >-
+        {{ "the exported LUDUS_API_KEY (caller already held this identity)"
+           if __cla_caller_user == cluster_ludus_auth_identity else
+           "the credential store, read over the PocketBase API as record "
+           ~ "sha256:" ~ (cluster_ludus_auth_record | hash('sha256') | truncate(12, true, '')) }}
+      key_length: "{{ __cla_api_key | length }}"
+      whoami: "HTTP {{ cluster_ludus_auth_status }} as userID={{ cluster_ludus_auth_user }}"
+      is_admin: "{{ cluster_ludus_auth_is_admin }}"

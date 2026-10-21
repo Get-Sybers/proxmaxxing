@@ -1,0 +1,305 @@
+---
+- name: "Ceph tuning for a 1 Gb, 2-OSD-host cluster"
+  hosts: proxmox_master
+  gather_facts: false
+  tasks:
+    - name: "Fact-find: Ceph is up and answering"
+      ansible.builtin.command: ceph health
+      register: __health
+      changed_when: false
+      check_mode: false
+      failed_when: __health.rc != 0
+    - name: "Fact-find: the mon config store (authoritative for what is EXPLICITLY set)"
+      ansible.builtin.command: ceph config dump -f json
+      register: __config_dump
+      changed_when: false
+      check_mode: false
+    - name: "Fact-find: every pool with its current size and min_size"
+      ansible.builtin.command: ceph osd pool ls detail -f json
+      register: __pool_detail
+      changed_when: false
+      check_mode: false
+    - name: "Fact-find: the current bytes of the ceph.conf this play edits"
+      ansible.builtin.slurp:
+        src: "{{ ceph_conf_path }}"
+      register: __ceph_conf_prior
+      check_mode: false
+    - name: "Fact-find: index the captured prior state per item"
+      ansible.builtin.set_fact:
+        __setting_keys: >-
+          {{ ceph_osd_tuning | map(attribute='section')
+             | zip(ceph_osd_tuning | map(attribute='name')) | map('join', '/') | list }}
+        __prior_config: >-
+          {{ dict(__dump | map(attribute='section') | zip(__dump | map(attribute='name')) | map('join', '/') | list
+                  | zip(__dump | map(attribute='value') | list)) }}
+        __prior_pools: "{{ dict(__pd | map(attribute='pool_name') | list | zip(__pd)) }}"
+        __pool_names: "{{ __pd | map(attribute='pool_name') | list }}"
+      vars:
+        __dump: "{{ __config_dump.stdout | from_json }}"
+        __pd: "{{ __pool_detail.stdout | from_json }}"
+    - name: "Fact-find: report the prior values a rescue would put back"
+      ansible.builtin.debug:
+        msg: |-
+          ceph health: {{ __health.stdout | trim }}
+          config keys this play sets, and their PRIOR values:
+          {% for k in __setting_keys %}
+            {{ k }} = {{ __prior_config[k] | default('UNSET  (rescue would `ceph config rm` it)', true) }}
+          {% endfor %}
+          pools and their PRIOR size/min_size:
+          {% for p in __pool_names %}
+            {{ p }} = size {{ __prior_pools[p].size }} / min_size {{ __prior_pools[p].min_size }}
+          {% endfor %}
+          {{ ceph_conf_path }}: {{ __ceph_conf_prior.content | b64decode | length }} bytes captured verbatim
+    - name: "Preflight: every prior value needed for a rollback was actually captured"
+      ansible.builtin.assert:
+        that:
+          - __config_dump.rc == 0
+          - __pool_detail.rc == 0
+          - __pool_names | length > 0
+          - __ceph_conf_prior.content | b64decode | length > 0
+        success_msg: >-
+          Prior state captured: {{ __prior_config | length }} explicitly-set config keys,
+          {{ __pool_names | length }} pools, {{ ceph_conf_path }} read.
+        fail_msg: >-
+          Refusing to mutate Ceph: the prior state could not be read, so nothing could be
+          put back on failure. config-dump rc={{ __config_dump.rc | default('?') }},
+          pool-detail rc={{ __pool_detail.rc | default('?') }},
+          pools seen={{ __pool_names | default([]) | length }}.
+    - name: "--check: report the drift instead of simulating a rollback"
+      ansible.builtin.debug:
+        msg: |-
+          CHECK MODE — nothing was changed, and no rollback was attempted.
+          config keys that WOULD change:
+          {% for s in ceph_osd_tuning %}
+          {%   set k = s.section ~ '/' ~ s.name %}
+          {%   if __prior_config[k] | default('') != s.value | string %}
+            {{ k }}: {{ __prior_config[k] | default('UNSET', true) }} -> {{ s.value }}   ({{ s.why }})
+          {%   endif %}
+          {% endfor %}
+          pools that WOULD change:
+          {% for p in __pool_names %}
+          {%   if __prior_pools[p].size | string != ceph_pool_size | string
+                 or __prior_pools[p].min_size | string != ceph_pool_min_size | string %}
+            {{ p }}: size {{ __prior_pools[p].size }} -> {{ ceph_pool_size }}, min_size {{ __prior_pools[p].min_size }} -> {{ ceph_pool_min_size }}
+          {%   endif %}
+          {% endfor %}
+          (a section listing nothing is already at target)
+      when: ansible_check_mode
+    - name: "Apply the tuning, prove it took, and put the prior values back if it did not"
+      when: not ansible_check_mode
+      block:
+        - name: "Set the osd tuning keys in the mon config store"
+          ansible.builtin.command:
+            argv: [ceph, config, set, "{{ item.section }}", "{{ item.name }}", "{{ item.value }}"]
+          loop: "{{ ceph_osd_tuning }}"
+          loop_control: { label: "{{ item.section }}/{{ item.name }} = {{ item.value }} ({{ item.why }})" }
+          changed_when: __prior_config[item.section ~ '/' ~ item.name] | default('') != item.value
+        - name: "Force every pool to a placeable replica count"
+          ansible.builtin.command:
+            argv: [ceph, osd, pool, set, "{{ item }}", size, "{{ ceph_pool_size }}"]
+          loop: "{{ __pool_names }}"
+          changed_when: __prior_pools[item].size | string != ceph_pool_size | string
+        - name: "Set min_size on every pool"
+          ansible.builtin.command:
+            argv: [ceph, osd, pool, set, "{{ item }}", min_size, "{{ ceph_pool_min_size }}"]
+          loop: "{{ __pool_names }}"
+          changed_when: __prior_pools[item].min_size | string != ceph_pool_min_size | string
+        - name: "Keep ceph.conf defaults consistent with the pool policy"
+          ansible.builtin.lineinfile:
+            path: "{{ ceph_conf_path }}"
+            regexp: "^\tosd_pool_default_{{ item.key }} = "
+            line: "\tosd_pool_default_{{ item.key }} = {{ item.value }}"
+            insertafter: '^\[global\]'
+          loop: "{{ ceph_conf_defaults }}"
+          loop_control: { label: "osd_pool_default_{{ item.key }}" }
+        - name: "Post-check: re-read the mon config store"
+          ansible.builtin.command: ceph config dump -f json
+          register: __config_dump_after
+          changed_when: false
+          check_mode: false
+        - name: "Post-check: re-read every pool's size and min_size"
+          ansible.builtin.command: ceph osd pool ls detail -f json
+          register: __pool_detail_after
+          changed_when: false
+          check_mode: false
+        - name: "Post-check: re-read the ceph.conf this play edited"
+          ansible.builtin.slurp:
+            src: "{{ ceph_conf_path }}"
+          register: __ceph_conf_after
+          check_mode: false
+        - name: "Post-check: index what Ceph now reports"
+          ansible.builtin.set_fact:
+            __after_config: >-
+              {{ dict(__dump | map(attribute='section') | zip(__dump | map(attribute='name')) | map('join', '/') | list
+                      | zip(__dump | map(attribute='value') | list)) }}
+            __after_pools: "{{ dict(__pd | map(attribute='pool_name') | list | zip(__pd)) }}"
+            __after_conf_text: "{{ __ceph_conf_after.content | b64decode }}"
+          vars:
+            __dump: "{{ __config_dump_after.stdout | from_json }}"
+            __pd: "{{ __pool_detail_after.stdout | from_json }}"
+        - name: "POST-CHECK: Ceph itself reports every value this play set"
+          ansible.builtin.assert:
+            that:
+              - __setting_keys | map('extract', __after_config) | list
+                == ceph_osd_tuning | map(attribute='value') | list
+              - __pool_names | map('extract', __after_pools) | map(attribute='size') | map('string') | list
+                == [ceph_pool_size | string] * (__pool_names | length)
+              - __pool_names | map('extract', __after_pools) | map(attribute='min_size') | map('string') | list
+                == [ceph_pool_min_size | string] * (__pool_names | length)
+              - "'osd_pool_default_size = ' ~ ceph_pool_size in __after_conf_text"
+              - "'osd_pool_default_min_size = ' ~ ceph_pool_min_size in __after_conf_text"
+            success_msg: >-
+              Verified from Ceph itself: {{ ceph_osd_tuning | length }} config keys,
+              {{ __pool_names | length }} pools at size={{ ceph_pool_size }}/min_size={{ ceph_pool_min_size }},
+              and {{ ceph_conf_path }} carries the matching defaults.
+            fail_msg: |-
+              Ceph does NOT report the values this play just set.
+              {% for k in __setting_keys %}
+                {{ k }}: want {{ ceph_osd_tuning[loop.index0].value }}, ceph reports {{ __after_config[k] | default('(unset)', true) }}
+              {% endfor %}
+              {% for p in __pool_names %}
+                pool {{ p }}: want {{ ceph_pool_size }}/{{ ceph_pool_min_size }}, ceph reports {{ __after_pools[p].size }}/{{ __after_pools[p].min_size }}
+              {% endfor %}
+      rescue:
+        - name: "Rescue: restore config keys that HAD a prior value"
+          ansible.builtin.command:
+            argv: [ceph, config, set, "{{ item.section }}", "{{ item.name }}",
+                   "{{ __prior_config[item.section ~ '/' ~ item.name] }}"]
+          loop: "{{ ceph_osd_tuning }}"
+          loop_control:
+            label: "{{ item.section }}/{{ item.name }} <- {{ __prior_config[item.section ~ '/' ~ item.name] | default('(was unset)') }}"
+          when: (item.section ~ '/' ~ item.name) in __prior_config
+          register: __restore_set
+          changed_when: __restore_set.rc == 0
+          failed_when: false
+        - name: "Rescue: remove config keys that had NO prior value (unset is not empty)"
+          ansible.builtin.command:
+            argv: [ceph, config, rm, "{{ item.section }}", "{{ item.name }}"]
+          loop: "{{ ceph_osd_tuning }}"
+          loop_control: { label: "{{ item.section }}/{{ item.name }} <- back to UNSET" }
+          when: (item.section ~ '/' ~ item.name) not in __prior_config
+          register: __restore_rm
+          changed_when: __restore_rm.rc == 0
+          failed_when: false
+        - name: "Rescue: restore each pool's OWN prior size (per item, not one global value)"
+          ansible.builtin.command:
+            argv: [ceph, osd, pool, set, "{{ item }}", size, "{{ __prior_pools[item].size }}"]
+          loop: "{{ __pool_names }}"
+          loop_control: { label: "{{ item }} size <- {{ __prior_pools[item].size }}" }
+          register: __restore_size
+          changed_when: __restore_size.rc == 0
+          failed_when: false
+        - name: "Rescue: restore each pool's OWN prior min_size"
+          ansible.builtin.command:
+            argv: [ceph, osd, pool, set, "{{ item }}", min_size, "{{ __prior_pools[item].min_size }}"]
+          loop: "{{ __pool_names }}"
+          loop_control: { label: "{{ item }} min_size <- {{ __prior_pools[item].min_size }}" }
+          register: __restore_min
+          changed_when: __restore_min.rc == 0
+          failed_when: false
+        - name: "Rescue: restore ceph.conf byte-for-byte from the captured bytes"
+          ansible.builtin.copy:
+            content: "{{ __ceph_conf_prior.content | b64decode }}"
+            dest: "{{ ceph_conf_path }}"
+            mode: "0644"
+          register: __restore_conf
+          failed_when: false
+        - name: "Rescue verify: re-read the mon config store"
+          ansible.builtin.command: ceph config dump -f json
+          register: __restore_dump
+          changed_when: false
+          check_mode: false
+          failed_when: false
+        - name: "Rescue verify: re-read the pools"
+          ansible.builtin.command: ceph osd pool ls detail -f json
+          register: __restore_pools_raw
+          changed_when: false
+          check_mode: false
+          failed_when: false
+        - name: "Rescue verify: re-read ceph.conf"
+          ansible.builtin.slurp:
+            src: "{{ ceph_conf_path }}"
+          register: __restore_conf_read
+          check_mode: false
+          failed_when: false
+        - name: "Rescue verify: index what came back"
+          ansible.builtin.set_fact:
+            __restore_reads_ok: >-
+              {{ (__restore_dump.rc | default(1)) == 0
+                 and (__restore_pools_raw.rc | default(1)) == 0
+                 and __restore_conf_read.content is defined }}
+            __restored_config: >-
+              {{ dict(__d | map(attribute='section') | zip(__d | map(attribute='name')) | map('join', '/') | list
+                      | zip(__d | map(attribute='value') | list)) }}
+            __restored_pools: "{{ dict(__p | map(attribute='pool_name') | list | zip(__p)) }}"
+          vars:
+            __d: "{{ (__restore_dump.stdout | default('[]') | from_json) if (__restore_dump.rc | default(1)) == 0 else [] }}"
+            __p: "{{ (__restore_pools_raw.stdout | default('[]') | from_json) if (__restore_pools_raw.rc | default(1)) == 0 else [] }}"
+        - name: "Rescue verify: compare, key by key, what came back against what was captured"
+          ansible.builtin.set_fact:
+            __config_verdicts: >-
+              {{ __config_verdicts | default([]) + [{
+                   'key': item,
+                   'was': __prior_config[item] | default('UNSET', true),
+                   'now': __restored_config[item] | default('UNSET', true),
+                   'ok': (__prior_config[item] | default('UNSET', true))
+                         == (__restored_config[item] | default('UNSET', true)) }] }}
+          loop: "{{ __setting_keys }}"
+        - name: "Rescue verify: compare, pool by pool, what came back against what was captured"
+          ansible.builtin.set_fact:
+            __pool_verdicts: >-
+              {{ __pool_verdicts | default([]) + [{
+                   'pool': item,
+                   'was': __prior_pools[item].size ~ '/' ~ __prior_pools[item].min_size,
+                   'now': (__restored_pools[item].size ~ '/' ~ __restored_pools[item].min_size)
+                          if item in __restored_pools else 'MISSING',
+                   'ok': (__prior_pools[item].size ~ '/' ~ __prior_pools[item].min_size)
+                         == ((__restored_pools[item].size ~ '/' ~ __restored_pools[item].min_size)
+                             if item in __restored_pools else 'MISSING') }] }}
+          loop: "{{ __pool_names }}"
+        - name: "Rescue verify: did the captured ceph.conf bytes come back exactly?"
+          ansible.builtin.set_fact:
+            __conf_restored: "{{ (__restore_conf_read.content | default('')) == (__ceph_conf_prior.content | default(' ')) }}"
+        - name: "Rescue verify: the rollback verdict"
+          ansible.builtin.set_fact:
+            __restore_verdict: >-
+              {{ __restore_reads_ok | bool
+                 and (__config_verdicts | rejectattr('ok') | list | length) == 0
+                 and (__pool_verdicts | rejectattr('ok') | list | length) == 0
+                 and __conf_restored | bool }}
+        - name: "Rescue: fail reporting the original error AND the rollback verdict"
+          ansible.builtin.fail:
+            msg: |-
+              CEPH TUNING FAILED{{ ' AND WAS ROLLED BACK' if __restore_verdict | bool else ' — ROLLBACK INCOMPLETE' }}.
+              (1) ORIGINAL FAILURE — task '{{ ansible_failed_task.name | default('unknown') }}':
+                  {{ ansible_failed_result.msg | default(ansible_failed_result) | default('(no result captured)') }}
+              (2) ROLLBACK: {{ 'VERIFIED — every captured prior value was re-read from Ceph and matches.'
+                               if __restore_verdict | bool else
+                               'NOT VERIFIED — Ceph does NOT match the captured prior state, so it is in an
+                                UNKNOWN configuration and needs manual inspection.' }}
+                  restore reads ok: {{ __restore_reads_ok }}
+                  restore command rcs (skipped items carry no rc and are omitted):
+                                       set={{ __restore_set.results | default([]) | selectattr('rc', 'defined') | map(attribute='rc') | list }}
+                                       rm={{ __restore_rm.results | default([]) | selectattr('rc', 'defined') | map(attribute='rc') | list }}
+                                       pool-size={{ __restore_size.results | default([]) | selectattr('rc', 'defined') | map(attribute='rc') | list }}
+                                       pool-min-size={{ __restore_min.results | default([]) | selectattr('rc', 'defined') | map(attribute='rc') | list }}
+                  ceph.conf restored byte-for-byte: {{ __conf_restored }}
+              {% for v in __config_verdicts %}
+                  {{ 'OK  ' if v.ok else 'FAIL' }} {{ v.key }}: captured={{ v.was }} now={{ v.now }}
+              {% endfor %}
+              {% for v in __pool_verdicts %}
+                  {{ 'OK  ' if v.ok else 'FAIL' }} pool {{ v.pool }}: captured={{ v.was }} now={{ v.now }}
+              {% endfor %}
+              (3) NOTE: a pool `size` revert restores the NUMBER immediately, but the
+                  re-replication it triggers is real backfill work — check `ceph -s`.
+    - name: "Verify health after tuning"
+      ansible.builtin.command: ceph health
+      register: __health_after
+      changed_when: false
+      check_mode: false
+    - name: "Report final health"
+      ansible.builtin.debug:
+        msg: >-
+          ceph health: {{ __health_after.stdout | trim }}
+          {{ '(if HEALTH_WARN mentions undersized PGs, a pool still has size > OSD hosts)'
+             if 'WARN' in __health_after.stdout else '' }}

@@ -1,0 +1,66 @@
+---
+- name: Converge (expect controlled failures)
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Fetching a missing required secret fails at the role's own assertion
+      block:
+        - name: Attempt to fetch a secret whose file is absent
+          ansible.builtin.include_role:
+            name: get_sybers.cluster.cluster_secrets
+            tasks_from: get
+          vars:
+            cluster_secrets_backend: file
+            cluster_secrets_request:
+              name: molecule-missing
+              path: /nonexistent/secret.key
+              required: true
+      rescue:
+        - name: The role stopped at its presence assertion, not an uncaught crash
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result is defined
+              - "'missing or badly permissioned' in (ansible_failed_result.msg | default(''))"
+            fail_msg: >-
+              failed, but not at the backend_file presence assertion:
+              {{ ansible_failed_result | default({}) }}
+            quiet: true
+        - name: Record the controlled failure
+          ansible.builtin.set_fact:
+            __molecule_failed_cleanly: true
+    - name: The missing-secret failure path was taken
+      ansible.builtin.assert:
+        that:
+          - __molecule_failed_cleanly | default(false)
+        fail_msg: "cluster_secrets accepted a missing required secret"
+        quiet: true
+    - name: Selecting the unimplemented keychain backend fails loudly
+      block:
+        - name: Attempt to fetch via the not-yet-built keychain backend
+          ansible.builtin.include_role:
+            name: get_sybers.cluster.cluster_secrets
+            tasks_from: get
+          vars:
+            cluster_secrets_backend: keychain
+            cluster_secrets_request:
+              name: molecule-keychain
+      rescue:
+        - name: The keychain backend refused loudly, not a silent stub
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result is defined
+              - "'not implemented yet' in (ansible_failed_result.msg | default(''))"
+            fail_msg: >-
+              failed, but not at the keychain not-implemented guard:
+              {{ ansible_failed_result | default({}) }}
+            quiet: true
+        - name: Record the controlled failure
+          ansible.builtin.set_fact:
+            __keychain_failed_cleanly: true
+    - name: The keychain failure path was taken
+      ansible.builtin.assert:
+        that:
+          - __keychain_failed_cleanly | default(false)
+        fail_msg: "cluster_secrets keychain backend did not fail loudly"
+        quiet: true

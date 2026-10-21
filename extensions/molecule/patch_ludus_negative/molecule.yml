@@ -1,0 +1,11 @@
+---
+# cluster_patch_ludus negative — with no ludus binary on the host (the Debian
+# test container has none), the version guard must stop cleanly before touching
+# any file, not patch against an unknown tree. No prepare; converge drives it.
+scenario:
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - converge
+    - destroy

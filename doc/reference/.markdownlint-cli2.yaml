@@ -1,0 +1,6 @@
+---
+# proxmox-ldap-authentication.md is carried verbatim from its source; the style
+# rules of the root configuration apply to this repository's own prose, not to
+# it. index.md is linted by the root configuration.
+ignores:
+  - proxmox-ldap-authentication.md

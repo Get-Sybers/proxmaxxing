@@ -1,0 +1,23 @@
+---
+galaxy_info:
+  role_name: cluster_ceph_orphan_sweep
+  namespace: get_sybers
+  author: Get-Sybers
+  description: >-
+    Reap orphaned Ceph RBD disks left on the guest RBD pool by cfs-lock-timed-out
+    qmdestroy calls (ERR-20,
+    cluster-wide so a single node reaches every disk. Direct `rbd rm` bypasses the
+    cfs-lock that stranded the disk in the first place. An image is an orphan iff
+    NO live guest (VM or CT) config references it — which catches both a dead VMID and
+    a VMID re-adopted by a later template build (
+    candidates, so snapshot/cloudinit/state volumes are never touched. Previews by
+    default (removes nothing until cluster_ceph_orphan_sweep_preview_only=false); --check is a
+    second preview.
+  company: Get-Sybers
+  license: AGPL-3.0-only
+  min_ansible_version: "2.19.0"
+  platforms:
+    - name: Debian
+      versions: [bookworm, trixie]
+  galaxy_tags: [ceph, rbd, cleanup, orphan, proxmox, cluster]
+dependencies: []

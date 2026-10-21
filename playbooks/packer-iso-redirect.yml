@@ -1,0 +1,46 @@
+---
+- name: "Redirect packer templates at locally-held ISOs"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  pre_tasks:
+    - name: "Running as root"
+      ansible.builtin.assert:
+        that: lookup('pipe', 'id -u') == '0'
+        fail_msg: "must run as root — this rewrites files in the stock Ludus tree"
+        quiet: true
+  tasks:
+    - name: "Redirect, and put every file back if the verify fails"
+      block:
+        - name: "Apply the packer ISO redirect"
+          ansible.builtin.include_role:
+            name: get_sybers.cluster.cluster_patch_packer_iso
+      rescue:
+        - name: "Restore each template this run captured"
+          ansible.builtin.copy:
+            src: "{{ item }}.iso-redirect.bak"
+            dest: "{{ item }}"
+            remote_src: true
+            mode: preserve
+          loop: "{{ _pi_backups | default([]) }}"
+          loop_control:
+            label: "{{ item | basename }}"
+        - name: "Re-read to prove the restore took"
+          ansible.builtin.slurp:
+            src: "{{ item }}"
+          loop: "{{ _pi_backups | default([]) }}"
+          loop_control:
+            label: "{{ item | basename }}"
+          register: __pi_restored
+        - name: "Fail reporting BOTH the original error and the restore outcome"
+          ansible.builtin.fail:
+            msg: |-
+              packer ISO redirect FAILED{{ ' and was rolled back'
+                 if (_pi_backups | default([]) | length) > 0
+                 else ' before writing anything — nothing to roll back' }}
+              {{ '(restore VERIFIED — no restored template carries the marker)'
+                 if (__pi_restored.results | default([]) | map(attribute='content') | map('b64decode')
+                     | select('search', 'LOCAL PATCH \(ISO-REDIRECT\)') | list | length) == 0
+                 else '— ROLLBACK INCOMPLETE, some templates still carry the marker' }}
+              restored: {{ _pi_backups | default([]) | length }} file(s)
+              original error: {{ ansible_failed_result.msg | default('see above') }}

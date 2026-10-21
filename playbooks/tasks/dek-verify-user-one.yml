@@ -1,0 +1,41 @@
+---
+- name: "dek-verify-user-one | Fetch the Ludus API key from the vault for {{ item }}"
+  ansible.builtin.include_role:
+    name: get_sybers.cluster.cluster_secrets
+    tasks_from: ludus_user_key
+  vars:
+    cluster_secrets_ludus_user_id: "{{ item }}"
+- name: "dek-verify-user-one | GET /user/credentials (proves proxmoxPassword) as {{ item }}"
+  ansible.builtin.uri:
+    url: "{{ ludus_api }}/user/credentials"
+    method: GET
+    validate_certs: false
+    headers:
+      X-API-KEY: "{{ cluster_secrets_ludus_user_api_key }}"
+    status_code: [200]
+    return_content: false
+  register: __dek_verify_creds
+  no_log: true
+  changed_when: false
+- name: "dek-verify-user-one | GET /templates (proves proxmoxTokenSecret against PVE) as {{ item }}"
+  ansible.builtin.uri:
+    url: "{{ ludus_api }}/templates"
+    method: GET
+    validate_certs: false
+    headers:
+      X-API-KEY: "{{ cluster_secrets_ludus_user_api_key }}"
+    status_code: [200]
+  register: __dek_verify_templates
+  no_log: true
+  changed_when: false
+- name: "dek-verify-user-one | Forget the in-memory API key"
+  ansible.builtin.include_role:
+    name: get_sybers.cluster.cluster_secrets
+    tasks_from: forget
+- name: "dek-verify-user-one | Report SHAPE only (status codes, never any body)"
+  ansible.builtin.debug:
+    msg: >-
+      LIVE PROOF for {{ item }}: /user/credentials
+      HTTP {{ __dek_verify_creds.status }} (proxmoxPassword decrypts under the
+      new key); /templates HTTP {{ __dek_verify_templates.status }}
+      (proxmoxTokenSecret decrypts AND authenticates to Proxmox).

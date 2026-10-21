@@ -1,0 +1,17 @@
+---
+- name: Converge
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Fetch the seeded secret and extract the RA.* token via regex
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_secrets
+        tasks_from: get
+      vars:
+        cluster_secrets_backend: file
+        cluster_secrets_request:
+          name: molecule-test
+          path: /etc/cluster-secrets-test.key
+          regex: 'RA\.[A-Za-z0-9._+/=-]+'
+          required: true

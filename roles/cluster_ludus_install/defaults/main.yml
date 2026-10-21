@@ -1,0 +1,41 @@
+---
+# Install root and the (default-off) installer path.
+cluster_ludus_install_root: /opt/ludus
+cluster_ludus_install_run_installer: false
+cluster_ludus_install_binary_url: ""
+cluster_ludus_install_binary_checksum: ""
+cluster_ludus_install_version: ""
+
+# config.yml reconcile — the SAFE keys, managed by default. The site values
+# (the shared guest pool, the SDN zone, the range numbers reserved for the
+# cluster's own networks) are read from the collection variables the inventory
+# defines (standards §4d); the rest are Ludus's own cluster-mode constants.
+cluster_ludus_install_vm_storage_pool: "{{ ceph_pool }}"
+cluster_ludus_install_vm_storage_format: raw
+cluster_ludus_install_iso_storage_pool: local
+cluster_ludus_install_reserved_range_numbers: "{{ ludus_reserved_range_numbers }}"
+cluster_ludus_install_cluster_mode: true
+cluster_ludus_install_sdn_zone: "{{ sdn_zone }}"
+cluster_ludus_install_vxlan_tag_base: 0
+cluster_ludus_install_proxmox_node: "{{ inventory_hostname }}"
+
+# Host NETWORK keys are NOT reconciled by default: the installer already set them
+# to the working values, and this cluster's Ceph mesh means a wrong guess would
+# break networking (run-sheet caution C1). Opt in explicitly, and only then are
+# the *_net_* values below written.
+cluster_ludus_install_manage_network: false
+cluster_ludus_install_net_interface: ""
+cluster_ludus_install_net_local_ip: ""
+cluster_ludus_install_net_gateway: ""
+cluster_ludus_install_net_netmask: ""
+
+# Stage the ROOT API key into the house credential store so cluster_secrets'
+# primary path resolves it (it also has an install-path fallback).
+cluster_ludus_install_stage_root_key: true
+cluster_ludus_install_vault_dir: /root/ludus-credentials
+
+# Prove the acting key authenticates after reconcile (needs LUDUS_API_KEY in the
+# environment, e.g. from playbooks/ludus-ra-auth.yml). Off by default.
+cluster_ludus_install_verify_whoami: false
+cluster_ludus_install_api_url: "https://127.0.0.1:8080/api/v2"
+cluster_ludus_install_validate_certs: false

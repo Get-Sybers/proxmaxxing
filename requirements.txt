@@ -1,0 +1,3 @@
+# Runtime Python dependencies of this collection's plugins (galaxy-importer,
+# ansible-builder, tox-ansible read this). The modules/filters here use only the
+# Python standard library, so there are no third-party runtime requirements.

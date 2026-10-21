@@ -1,0 +1,22 @@
+---
+# ansible-standards §13: the single source of pinned versions. Every galaxy.yml
+# dependency appears here pinned to one exact X.Y.Z inside its bound, and nothing
+# else in the tree carries a version literal. `scripts/upgrade_pins.py` raises
+# these to the highest release still inside the galaxy.yml bound.
+collections:
+  - name: community.general
+    version: "10.3.0"
+    source: https://galaxy.ansible.com
+  - name: ansible.posix
+    version: "1.6.2"
+    source: https://galaxy.ansible.com
+  - name: community.proxmox
+    version: "2.1.0"
+    source: https://galaxy.ansible.com
+  # Test tooling, not a runtime dependency: molecule's docker driver drives the
+  # Debian test container through this collection. Not a galaxy.yml dependency, so
+  # check_pins reports it as a tolerated test-only pin; upgrade_pins raises it
+  # within its own major.
+  - name: community.docker
+    version: "5.4.0"
+    source: https://galaxy.ansible.com

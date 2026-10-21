@@ -1,0 +1,17 @@
+---
+# apt repository policy for every node (cluster-node-repos.yml): the
+# no-subscription PVE and Ceph repos, the enterprise repo removed. The Debian
+# suite is never hard-coded — the play reads it from the node.
+node_repos_sources_dir: /etc/apt/sources.list.d
+node_repos_pve_uri: "http://download.proxmox.com/debian/pve"
+node_repos_pve_component: "pve-no-subscription"
+node_repos_ceph_uri: "http://download.proxmox.com/debian/ceph-squid"
+node_repos_ceph_component: "no-subscription"
+node_repos_keyring: "/usr/share/keyrings/proxmox-archive-keyring.gpg"
+node_repos_manage_ceph: true
+# Every file the play owns (captured before, restored on failure), and why.
+node_repos_managed_files:
+  - { name: pve-enterprise.sources, why: "installer default; 401s without a subscription" }
+  - { name: pve-enterprise.list, why: "older .list form, if a node predates deb822" }
+  - { name: pve-no-subscription.sources, why: "our PVE repo, written only when nothing else provides it" }
+  - { name: ceph.sources, why: "belt-and-braces Ceph repo (pveceph writes this too)" }

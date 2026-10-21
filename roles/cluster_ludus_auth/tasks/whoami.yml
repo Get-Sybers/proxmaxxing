@@ -1,0 +1,50 @@
+---
+- name: "whoami | Verify the key against the Ludus API (/whoami)"
+  ansible.builtin.uri:
+    url: "{{ cluster_ludus_auth_api_url }}/whoami"
+    method: GET
+    headers:
+      X-API-KEY: "{{ __cla_api_key }}"
+    validate_certs: false
+    status_code: [200, 401, 403]
+    return_content: true
+  register: __cla_whoami
+  failed_when: false
+  no_log: true
+  check_mode: false
+- name: "whoami | Derive the NON-SECRET identity result"
+  ansible.builtin.set_fact:
+    cluster_ludus_auth_status: "{{ __cla_whoami.status | default(0) }}"
+    cluster_ludus_auth_user: >-
+      {{ ((__cla_whoami.content | from_json).user.userID | default(''))
+         if ((__cla_whoami.status | default(0) | int) == 200
+             and (__cla_whoami.content | default('') | trim).startswith('{'))
+         else '' }}
+    cluster_ludus_auth_is_admin: >-
+      {{ ((__cla_whoami.content | from_json).user.isAdmin | default(false) | bool)
+         if ((__cla_whoami.status | default(0) | int) == 200
+             and (__cla_whoami.content | default('') | trim).startswith('{'))
+         else false }}
+  no_log: true
+- name: "whoami | Assert the Ludus API accepted the key"
+  ansible.builtin.assert:
+    that: cluster_ludus_auth_status | int == 200
+    fail_msg: >-
+      The Ludus API rejected the key for
+      '{{ cluster_ludus_auth_identity }}' (HTTP
+      {{ cluster_ludus_auth_status }}). The PocketBase record is stale or the
+      server is down. Check systemctl status ludus.service, then mint and
+      persist a fresh key with playbooks/ludus-key-rotate.yml.
+    quiet: true
+- name: "whoami | Assert the key authenticates as the expected identity"
+  ansible.builtin.assert:
+    that: cluster_ludus_auth_user == cluster_ludus_auth_identity
+    fail_msg: >-
+      The key authenticates as '{{ cluster_ludus_auth_user }}', not
+      '{{ cluster_ludus_auth_identity }}' — commands would act as the wrong
+      user. The record and the identity disagree; re-persist the right key
+      with playbooks/ludus-key-rotate.yml.
+    success_msg: >-
+      Authenticated to the Ludus API as
+      userID={{ cluster_ludus_auth_user }} (HTTP 200).
+    quiet: true

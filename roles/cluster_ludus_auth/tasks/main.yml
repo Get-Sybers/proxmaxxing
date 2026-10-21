@@ -1,0 +1,10 @@
+---
+- name: "Refuse a bare include — chain entry points from the play"
+  ansible.builtin.fail:
+    msg: >-
+      cluster_ludus_auth has no default sequence: it is a library of
+      single-action task files, chained by the calling play. Include it with
+      tasks_from: (refuse_check, dek_read, credential_decrypt, whoami,
+      env_file_write, key_mint, ... — see roles/cluster_ludus_auth/
+      defaults/main.yml). The ready-made chains are the get_sybers.cluster
+      playbooks ludus-ra-auth.yml and ludus-key-rotate.yml.

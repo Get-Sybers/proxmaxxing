@@ -1,0 +1,42 @@
+---
+argument_specs:
+  main:
+    short_description: "Make held ISOs discoverable to packer builds (report by default); gated on the ISO manifest by sha256."
+    description:
+      - >-
+        Reads the ISO manifest, derives the build node from config.yml, links
+        held ISOs under the URL-derived name Proxmox expects (
+        per-template what it would redirect. Report-only unless cluster_patch_packer_iso_apply
+        is true.
+    options:
+      cluster_patch_packer_iso_manifest:
+        type: str
+        required: false
+        description: "Path to the sha256 ISO inventory the role matches against; it never guesses an ISO (computed from role_path)."
+      cluster_patch_packer_iso_search_paths:
+        type: list
+        required: false
+        default:
+          - /opt/ludus/packer
+          - /opt/ludus/users
+        description: "Both packer template trees that get clobbered by ludus-server --update and ludus source add --force; both are scanned."
+      cluster_patch_packer_iso_storage_pool:
+        type: str
+        required: false
+        default: "local"
+        description: "The Proxmox storage the ISOs live on (matches the iso_storage_pool Ludus passes)."
+      cluster_patch_packer_iso_apply:
+        type: bool
+        required: false
+        default: false
+        description: "Report only by default; set true to actually act (note: the template-rewrite path is superseded and refuses to write)."
+      cluster_patch_packer_iso_config_path:
+        type: str
+        required: false
+        default: "/opt/ludus/config.yml"
+        description: "Ludus config read at run time to derive the build node; a node name is never hardcoded."
+      cluster_patch_packer_iso_iso_dir:
+        type: str
+        required: false
+        default: "/var/lib/vz/template/iso"
+        description: "Where the `local` storage keeps its ISOs; the linker makes held images discoverable under the expected name here."

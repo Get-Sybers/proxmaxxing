@@ -1,0 +1,62 @@
+---
+changed:
+  - >-
+    Breaking: roles are renamed to a ``cluster_<category>_<tool>`` scheme
+    (variables and FQCN/``roles:`` references move with them) —
+    ``cluster_packer_plugins`` -> ``cluster_plugin_packer``,
+    ``cluster_ludus_patches`` -> ``cluster_patch_ludus``, and
+    ``cluster_packer_iso_patch`` -> ``cluster_patch_packer_iso``.
+  - >-
+    Breaking: every role variable is now prefixed with its role name (§18
+    var-naming), so callers must rename the inputs and consumed facts they set
+    (e.g. ``sysmon_*`` -> ``sysmon_linux_*``, ``cluster_pb_*`` ->
+    ``cluster_pb_store_*``, and the ``cluster_secrets`` inputs/outputs such as
+    ``infra_secret`` -> ``cluster_secrets_result``).
+  - >-
+    Collection identity corrected to ``get_sybers.cluster`` (was the
+    ``get_sybers.example`` scaffold); dependencies, ``requirements.yml`` pins,
+    the ``meta/runtime.yml`` floor and every role's ``min_ansible_version`` are
+    reconciled (§2/§13).
+  - >-
+    The ``cluster-ghost9-pve-token`` play manages the scoped deploy user, its API
+    token, the ACL-anchor pool and the ACLs through the ``community.proxmox``
+    modules (``proxmox_user`` — which mints the token and returns its secret —
+    ``proxmox_pool`` and ``proxmox_access_acl``), authenticating via the
+    collection's documented ``PROXMOX_*`` variables. The fictional
+    ``get_sybers.infra.proxmox_pveum`` module and its invented
+    ``get_sybers.infra`` dependency are replaced by ``community.proxmox`` as a
+    real declared dependency.
+  - >-
+    ansible-lint ``--profile production`` and yamllint pass across the
+    collection — FQCN, task-name and variable conventions (§11/§16/§18) are
+    enforced, and the lint-config files the hook set needs are in place.
+  - >-
+    Molecule is retargeted off the ``quay.io`` CentOS image onto a throwaway,
+    digest-pinned official Debian 13 container driven by the ``community.docker``
+    driver (PVE is Debian), configured once in a shared
+    ``extensions/molecule/config.yml`` base config. Every role has a negative
+    scenario (run without its live dependency it must stop at its own labelled
+    assertion, never crash); ``cluster_secrets``, whose host-side logic is
+    self-contained, also has a positive converge/idempotence/verify scenario with
+    a committed fixture. ``community.docker`` is pinned in ``requirements.yml`` as
+    test-only tooling (§12).
+fixed:
+  - >-
+    ``sysmon_linux`` asserts at entry that ``sysmon_linux_artefacts`` is
+    non-empty, so an unstaged run fails with a clear message instead of crashing
+    at ``sysmon -accepteula -i`` on a host that has no Sysmon package.
+  - >-
+    ``cluster_pb_store`` preflight probes PocketBase with ``failed_when: false``
+    and asserts reachability, turning an unreachable store into a labelled
+    diagnostic instead of an uncaught ``uri`` error.
+removed:
+  - >-
+    Removed the ansible-creator ``greet`` scaffold (the filter plugin and its
+    unit/integration tests) that the example molecule scenarios referenced.
+  - >-
+    Removed the ``cluster_patch_pct`` role and its ``pct-patch`` /
+    ``pct-cve-check`` plays (and the ``cluster_patch_pct`` step in
+    ``post-update-reconcile``): the CVE-2026-16658 fix to ``proxmox_pct_remote``
+    has been migrated upstream into ``community.proxmox`` (the plugin's current
+    home), so locally re-patching ``community.general``'s deprecated copy is
+    obsolete. Use ``community.proxmox.proxmox_pct_remote``.

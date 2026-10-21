@@ -1,0 +1,46 @@
+---
+- name: "vault-invariant-compose | Resolve the standing invariant play"
+  ansible.builtin.set_fact:
+    __vi_playbook: "{{ playbook_dir }}/cluster-vault-invariant.yml"
+- name: "vault-invariant-compose | Stat it"
+  ansible.builtin.stat:
+    path: "{{ __vi_playbook }}"
+  register: __vi_stat
+  check_mode: false
+- name: "vault-invariant-compose | Refuse if the standing check is not installed"
+  ansible.builtin.assert:
+    that: __vi_stat.stat.exists
+    fail_msg: >-
+      Missing {{ __vi_playbook }}. The cluster collection is not fully installed
+      — re-run `ludus ansible collection add https://github.com/Get-Sybers/proxmaxxing.git --global --force`. This
+      step deliberately does not fall back to an inline copy of the check: two
+      definitions of an invariant drift, and the copy is the one that silently
+      stops testing.
+    quiet: true
+- name: "vault-invariant-compose | Run cluster-vault-invariant.yml"
+  ansible.builtin.command:
+    argv:
+      - ansible-playbook
+      - "{{ __vi_playbook }}"
+  environment:
+    ANSIBLE_COLLECTIONS_PATH: "{{ vault_invariant_collections_path }}"
+  register: __vi_run
+  changed_when: false
+- name: "vault-invariant-compose | REFUSE to report a verdict the check never produced"
+  ansible.builtin.assert:
+    that:
+      - not (__vi_run.skipped | default(false))
+      - (__vi_run.rc | default(-1)) == 0
+    fail_msg: >-
+      The vault invariant check did NOT run (skipped={{ __vi_run.skipped | default(false) }},
+      rc={{ __vi_run.rc | default('none') }}). Under --check the nested
+      ansible-playbook cannot execute, so no verdict exists — and this step will
+      not manufacture one. Re-run without --check, or gate this include on
+      `not ansible_check_mode` in the calling play.
+    quiet: true
+- name: "vault-invariant-compose | Report the standing check's verdict"
+  ansible.builtin.debug:
+    msg: >-
+      cluster-vault-invariant.yml PASSED (rc={{ __vi_run.rc }}) — the vault
+      holds exactly the ruled entry. The invariant is re-proven, by the play
+      that owns it.

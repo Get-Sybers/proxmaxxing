@@ -1,0 +1,6 @@
+# {{ ansible_managed }}
+auto dummy0
+iface dummy0
+    link-type dummy
+    mtu 9000
+    address {{ __m.loopback }}/32

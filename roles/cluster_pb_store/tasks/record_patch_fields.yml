@@ -1,0 +1,20 @@
+---
+- name: "record_patch_fields | Patch the named fields on the record"
+  ansible.builtin.uri:
+    url: "{{ cluster_pb_store_base_url }}/api/collections/{{ cluster_pb_store_collection_name }}/records/{{ cluster_pb_store_record_id }}"
+    method: PATCH
+    headers:
+      Authorization: "{{ __pb_super_token }}"
+    body_format: json
+    body: "{{ cluster_pb_store_record_fields }}"
+    validate_certs: "{{ cluster_pb_store_validate_certs }}"
+    status_code: [200]
+  register: __pb_record_patch
+  no_log: true
+  changed_when: true
+- name: "record_patch_fields | Report SHAPE only (field names + lengths, never values)"
+  ansible.builtin.debug:
+    msg: >-
+      Record id {{ cluster_pb_store_record_id }} in {{ cluster_pb_store_collection_name }}:
+      patched fields {{ cluster_pb_store_record_fields.keys() | list }}
+      (lengths {{ cluster_pb_store_record_fields.values() | map('length') | list }}).

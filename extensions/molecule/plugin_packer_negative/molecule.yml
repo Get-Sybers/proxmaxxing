@@ -1,0 +1,11 @@
+---
+# cluster_plugin_packer negative — with no packer binary on the host (the Debian
+# test container has none), the role must fail clearly at its packer check and
+# change nothing. No prepare; converge drives the controlled failure itself.
+scenario:
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - converge
+    - destroy

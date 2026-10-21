@@ -1,0 +1,12 @@
+---
+# cluster_ceph_orphan_sweep negative — the role must refuse to sweep on a host
+# that is not a PVE node. It opens with the cluster_preflight gate, which stops
+# on the Debian test container (no /etc/pve) before any rbd/ceph call. No
+# prepare; converge drives the controlled failure itself.
+scenario:
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - converge
+    - destroy

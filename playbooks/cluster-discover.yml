@@ -1,0 +1,17 @@
+---
+# Discover the live cluster and fill the inventory's As-Is records from it.
+#
+#   ansible-playbook playbooks/cluster-discover.yml
+#       proposal files under inventory/discovered/ (never loaded); diff, adopt
+#   ansible-playbook playbooks/cluster-discover.yml --check --diff
+#       drift report only, nothing written
+#   ansible-playbook playbooks/cluster-discover.yml -e cluster_discover_write=in_place
+#       rewrite host_vars/<host>/node.yml and group_vars/proxmox_cluster/cluster.yml
+#   ... -e cluster_discover_overwrite=true   live values replace configured ones
+#   ... -e cluster_discover_strict=true      fail on any difference (a drift gate)
+- name: "Discover the cluster and fill the inventory records from it"
+  hosts: proxmox_cluster
+  gather_facts: true
+  gather_subset: ['!all', 'min', 'hardware', 'network']
+  roles:
+    - role: get_sybers.cluster.cluster_discover

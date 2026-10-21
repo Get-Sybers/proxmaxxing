@@ -1,0 +1,11 @@
+---
+# sysmon_linux negative — an empty artefact list must stop at the role's entry
+# assertion, never reach `sysmon -accepteula -i` on a host with no Sysmon
+# package. No prepare: converge drives the controlled failure itself.
+scenario:
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - converge
+    - destroy

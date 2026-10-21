@@ -1,0 +1,17 @@
+---
+galaxy_info:
+  role_name: cluster_ludus_auth
+  namespace: get_sybers
+  author: Get-Sybers
+  description: >-
+    A LIBRARY of single-action Ludus auth/credential task files, chained by
+    plays via tasks_from (fetch, prove at /whoami, persist the key, mint) — see
+    this role's README.md and defaults/main.yml for the entry-point list.
+  company: Get-Sybers
+  license: AGPL-3.0-only
+  min_ansible_version: "2.19.0"
+  platforms:
+    - name: Debian
+      versions: [bookworm, trixie]
+  galaxy_tags: [ludus, auth, credentials, apikey, pocketbase]
+dependencies: []

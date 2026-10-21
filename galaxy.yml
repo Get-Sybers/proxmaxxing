@@ -1,0 +1,71 @@
+---
+# get_sybers.cluster — collection manifest.
+# ansible-standards §2: one fully-qualified name (directory, `name`, and every
+# role's prefix agree); each dependency bounded `>=x.y.z,<next-major`, with the
+# exact pin living only in requirements.yml.
+namespace: get_sybers
+name: cluster
+version: 0.1.0
+readme: README.md
+authors:
+  - get-sybers <99623331+Get-Sybers@users.noreply.github.com>
+description: >-
+  Proxmox cluster-node automation: Ceph mesh/tuning/diagnostics, SDN zone/VNet
+  setup, audit-logging enforcement, node repository management, and storage
+  network configuration. These plays operate at host-root level on PVE nodes
+  and are the irreducible cluster-operations tier that cannot run under a
+  scoped service token.
+license:
+  - AGPL-3.0-only
+tags:
+  - proxmox
+  - cluster
+  - ceph
+  - infrastructure
+repository: https://github.com/get-sybers/proxmaxxing
+documentation: https://github.com/get-sybers/proxmaxxing/blob/main/README.md
+homepage: https://github.com/get-sybers/proxmaxxing
+issues: https://github.com/get-sybers/proxmaxxing/issues
+dependencies:
+  "community.general": ">=10.0.0,<11.0.0"
+  "ansible.posix": ">=1.6.0,<2.0.0"
+  # The ghost9 token-mint play manages PVE users/tokens/pools/ACLs through this
+  # collection's proxmox_user/proxmox_pool/proxmox_access_acl modules.
+  "community.proxmox": ">=2.1.0,<3.0.0"
+build_ignore:
+  - .git*
+  - .gitattributes
+  - .github
+  - .ansible
+  - .cache
+  - dist
+  - .pre-commit-config.yaml
+  - .ansible-lint
+  - .yamllint
+  - .markdownlint-cli2.yaml
+  - .editorconfig
+  - .editorconfig-checker.json
+  - .pinact.yaml
+  - .gitleaks.toml
+  - .gitleaksignore
+  - .shellcheckrc
+  - lychee.toml
+  - .lycheeignore
+  - tox.ini
+  - tox-ansible.ini
+  - test-requirements.txt
+  - tests
+  - extensions
+  - scripts
+  - container
+  - inventory
+  - doc
+  - AUTHORS
+  - MAINTAINERS
+  - CONTRIBUTING.md
+  - CODE_OF_CONDUCT.md
+  - SECURITY.md
+  - changelogs/.plugin-cache.yaml
+  - changelogs/fragments
+  - Makefile
+  - "*.tar.gz"

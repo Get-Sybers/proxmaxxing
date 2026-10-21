@@ -1,0 +1,29 @@
+---
+# Where the inventory lives: the directory -i points at (ansible.cfg sets it to
+# inventory/). The role reads the current records from the loaded vars (node,
+# cluster) and writes the results back here.
+cluster_discover_inventory_dir: "{{ inventory_dir }}"
+# The inventory group the cluster-wide snapshot is written for
+# (group_vars/<group>/cluster.yml).
+cluster_discover_group: proxmox_cluster
+# additional: write proposal files under <inventory_dir>/discovered/, mirroring
+#   the host_vars/ and group_vars/ layout, which Ansible never loads; review
+#   and copy them in, or re-run with in_place.
+# in_place: rewrite host_vars/<host>/node.yml and group_vars/<group>/cluster.yml
+#   themselves (git keeps the previous version).
+cluster_discover_write: additional
+# false (fill): a configured value wins, discovery only adds what is missing.
+# true (overwrite): the live value replaces the configured one. Annotations the
+# node cannot report (a disk's role, an interface's purpose) are kept either way.
+cluster_discover_overwrite: false
+# Keep a timestamped backup next to a file rewritten in place.
+cluster_discover_backup: false
+# Fail the run when the configuration disagrees with the live cluster (a drift
+# gate for CI or a pre-change check).
+cluster_discover_strict: false
+# Gather the Ceph side (needs the admin keyring and python3-rados on the node;
+# skipped automatically when /etc/ceph/ceph.conf is absent).
+cluster_discover_ceph: true
+# The host that holds the inventory checkout the records are written to
+# (the controller).
+cluster_discover_delegate_to: localhost

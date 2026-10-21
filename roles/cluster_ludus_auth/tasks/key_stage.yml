@@ -1,0 +1,10 @@
+---
+- name: "key_stage | Stage the minted key (0400 root, crash-safety copy)"
+  ansible.builtin.copy:
+    content: "{{ __cla_new_key }}\n"
+    dest: "{{ cluster_ludus_auth_staging_file }}"
+    owner: root
+    group: root
+    mode: "0400"
+    backup: false
+  no_log: true

@@ -1,0 +1,156 @@
+---
+- name: "Mint scoped @pve token, home in PB, emit deploy vars"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    # community.proxmox modules drive the PVE API; set the admin credential once
+    # for every proxmox_* task in this play.
+    group/community.proxmox.proxmox:
+      api_host: "{{ pve_api_host }}"
+      api_user: "{{ pve_api_user }}"
+      api_token_id: "{{ pve_api_token_id or omit }}"
+      api_token_secret: "{{ pve_api_token_secret or omit }}"
+      api_password: "{{ pve_api_password or omit }}"
+      validate_certs: "{{ pve_validate_certs }}"
+  tasks:
+    - name: "Refuse --check"
+      ansible.builtin.assert:
+        that: not ansible_check_mode
+        fail_msg: "This mints a real token; --check cannot simulate it."
+        quiet: true
+    - name: "An admin PVE API credential must be present"
+      ansible.builtin.assert:
+        that: (pve_api_token_secret | length > 0) or (pve_api_password | length > 0)
+        fail_msg: >-
+          No PVE admin credential in the environment. community.proxmox drives the
+          PVE API, so export PROXMOX_TOKEN_ID + PROXMOX_TOKEN_SECRET (preferred) or
+          PROXMOX_PASSWORD (with PROXMOX_USER, default root@pam) before running.
+        quiet: true
+      no_log: true
+    - name: "Cluster admission gate"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_preflight
+    - name: "Resolve the AES-GCM helper shipped beside the cluster plays"
+      ansible.builtin.set_fact:
+        __vm_helper: "{{ playbook_dir }}/files/pb-aesgcm.py"
+    - name: "Read the current database_encryption_key"
+      ansible.builtin.slurp:
+        src: "{{ ludus_config_path }}"
+      register: __g9_cfg
+      no_log: true
+    - name: "Derive the DEK (no_log)"
+      ansible.builtin.set_fact:
+        __vm_dek: >-
+          {{ (__g9_cfg.content | b64decode | from_yaml).database_encryption_key
+             | default('', true) or dek_public_default }}
+      no_log: true
+    - name: "REFUSE the public default DEK (#173)"
+      ansible.builtin.assert:
+        that:
+          - (__vm_dek | length) == 32
+          - __vm_dek != dek_public_default
+        fail_msg: "DEK is the public default or not 32 bytes — run cluster-dek-rotate.yml first."
+        quiet: true
+      no_log: true
+    - name: "Authenticate to PocketBase as the superuser"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_pb_store
+        tasks_from: auth_superuser
+    - name: "Fact-find the credentials collection"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_pb_store
+        tasks_from: collection_facts
+    - name: "Refuse unless Phase A applied"
+      ansible.builtin.assert:
+        that:
+          - __pb_collection_present | bool
+          - __pb_collection_rules_match | bool
+        fail_msg: "gs_infra_credentials missing/ACL-drifted — run cluster-pb-credentials-setup.yml first."
+        quiet: true
+    # Ensure the scoped user and clear any stale token first, so the mint below
+    # always yields a FRESH secret: PVE only returns a token's secret at creation,
+    # and proxmox_user reconciles the token list (deleting any token not listed).
+    - name: "Ensure the scoped deploy user with no tokens — {{ g9_user }}"
+      community.proxmox.proxmox_user:
+        userid: "{{ g9_user }}"
+        comment: "ghost9 CT deploy (phase 1b) — scoped, Fable-advised 2026-08-07"
+        state: present
+        tokens: []
+    - name: "Mint a fresh scoped token (privsep=0) — {{ g9_token }}"
+      community.proxmox.proxmox_user:
+        userid: "{{ g9_user }}"
+        state: present
+        tokens:
+          - tokenid: "{{ g9_token }}"
+            comment: "ghost9 CT deploy token (privsep=0)"
+            privsep: false
+      register: __g9_user
+      no_log: true
+    - name: "Capture the token secret from the create output"
+      ansible.builtin.set_fact:
+        __g9_token_secret: "{{ __g9_user.secrets[g9_token] | default('') }}"
+      no_log: true
+    - name: "A fresh secret must have come back (the token was just re-created)"
+      ansible.builtin.assert:
+        that: (__g9_token_secret | length) > 0
+        fail_msg: >-
+          proxmox_user returned no secret for token '{{ g9_token }}'. The prior task
+          clears the token so this create is always fresh — inspect the user's tokens
+          on the node.
+        quiet: true
+      no_log: true
+    - name: "Ensure the ACL-anchor pool (survives CT destroy) — {{ g9_pool }}"
+      community.proxmox.proxmox_pool:
+        poolid: "{{ g9_pool }}"
+        comment: "ghost9 range CT {{ g9_vmid }} only — ACL anchor for {{ g9_user }} (phase 1b)"
+        state: present
+    - name: "Grant the CT-create ACLs to {{ g9_user }}"
+      community.proxmox.proxmox_access_acl:
+        path: "{{ item.path }}"
+        roleid: "{{ item.role }}"
+        type: user
+        ugid: "{{ g9_user }}"
+        state: present
+      loop: "{{ g9_acls }}"
+      loop_control:
+        label: "{{ item.role }} @ {{ item.path }}"
+    - name: "Stage the secret (0400 root, outside the vault mountpoint)"
+      ansible.builtin.copy:
+        content: "{{ __g9_token_secret }}\n"
+        dest: "{{ g9_staging }}"
+        owner: root
+        group: root
+        mode: "0400"
+      no_log: true
+    - name: "Home the secret in gs_infra_credentials (encrypt→write→read-back→prove)"
+      ansible.builtin.include_tasks: tasks/vault-migrate-one.yml
+      vars:
+        item:
+          name: "{{ g9_record }}"
+          path: "{{ g9_staging }}"
+          label: "sha256:{{ g9_record | hash('sha256') | truncate(12, true, '') }}"
+    - name: "Write the 0600 ghost9_ct_api_* vars file"
+      ansible.builtin.copy:
+        dest: "{{ g9_deploy_vars }}"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          ghost9_ct_api_user: {{ g9_user }}
+          ghost9_ct_api_token_id: {{ g9_token }}
+          ghost9_ct_api_token_secret: {{ __g9_token_secret }}
+          ghost9_ct_api_host: localhost
+      no_log: true
+    - name: "Remove the staging file"
+      ansible.builtin.file:
+        path: "{{ g9_staging }}"
+        state: absent
+    - name: "Shape only"
+      ansible.builtin.debug:
+        msg:
+          user: "{{ g9_user }}"
+          token: "{{ g9_token }} (privsep=0)"
+          acls: "PVEVMAdmin@/pool/{{ g9_pool }}, PVEDatastoreUser@local & local-zfs, PVESDNUser@/sdn/zones/{{ sdn_zone }}/{{ g9_vnet }}"
+          pb_record: "{{ g9_record }} ({{ __vm_migrated | default([]) }})"
+          deploy_vars: "{{ g9_deploy_vars }} (0600)"

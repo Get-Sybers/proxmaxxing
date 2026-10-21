@@ -1,0 +1,91 @@
+---
+added:
+  - >-
+    ``docs/standards/ansible-standards.md`` — the Ansible standard (§1–§33 + appendices
+    A–D); rows in ``docs/README.md`` and ``docs/standards/ansible/dev-tools/README.md``
+    (§13, §15).
+  - >-
+    ``scripts/conform`` reports task names outside the §11 ``<role>-<stage> | description``
+    form (327 of 986 today, in 12 files) and records in its header the rules it
+    cannot yet fail on: §4 inline ``vars:`` (26 play-level), §7 ``changed_when: false``
+    on a mutating module (7, all controller-local scratch/test fixtures), §21
+    owner/group/mode on every file task (6 sites), §33 ``meta: end_play`` (2 sites in
+    ``cluster-audit-logging.yml``) (§15).
+  - >-
+    ``docs/standards/ansible/dev-tools/`` — the Ansible dev-tools standards 00–04
+    (toolchain, collection build loop, tox lint + tox-ansible sanity gates, CI
+    workflow, release workflow), carried verbatim as law across the source repos.
+  - >-
+    ``tox.ini`` (the ``lint`` env via prek) and ``tox-ansible.ini`` (the tox-ansible
+    sanity/unit/integration matrix) per Standard 02.
+  - >-
+    ``LICENSE`` (AGPL-3.0-only) matching ``galaxy.yml`` (§2, §14).
+  - >-
+    ``requirements.yml`` — the single source of exact dependency pins (§2, §25).
+  - >-
+    ``.ansible-lint`` (``profile: production``) with a documented ``name[casing]`` waiver
+    reconciling ansible-lint with the house task-naming form (§2, §11, §16).
+  - >-
+    ``.yamllint`` tuned for Ansible/Jinja (§16).
+  - >-
+    ``ansible.cfg`` setting ``inject_facts_as_vars = false`` and a meaningful
+    ``ansible_managed`` banner (§18, §19, §21).
+  - >-
+    ``.pre-commit-config.yaml`` running yamllint, ansible-lint, and gitleaks (§26).
+  - >-
+    ``scripts/conform`` (the gate) and ``scripts/upgrade`` (§13).
+  - >-
+    Per-role ``meta/argument_specs.yml``, ``README.md``, and ``meta/main.yml`` where
+    missing (§3), including ``cluster_ludus_auth``.
+  - >-
+    ``.github/workflows/test.yaml`` (``CI``, Standard 03): changelog, ansible-lint,
+    sanity, unit, and integration via ``ansible/ansible-content-actions@main``, plus
+    ``conform`` mirroring ``.gitlab-ci.yml``; ``all_green`` is the single required
+    check (§13, §15).
+  - >-
+    ``.github/workflows/release.yaml`` (``Release collection``, Standard 04): on a
+    published GitHub release, ``ansible/ansible-content-actions`` release.yaml
+    publishes to Automation Hub then Galaxy from the ``release`` environment
+    (``AH_TOKEN``, ``ANSIBLE_GALAXY_API_KEY``); ``changelogs/`` makes
+    antsibull-changelog the generator of ``CHANGELOG.md`` with Keep a Changelog
+    sections, the ``0.1.0`` notes seeded into ``changelogs/changelog.yaml`` and the
+    unreleased notes carried as a fragment (§2, §26, §31).
+changed:
+  - >-
+    ``meta/runtime.yml`` ``requires_ansible`` raised to ``>=2.16.0``, the floor every role's
+    ``min_ansible_version`` agrees with (``cluster_ceph_orphan_sweep`` and
+    ``cluster_patch_packer_iso`` declare 2.16) (§2).
+  - >-
+    ``galaxy.yml`` ``build_ignore`` now excludes ``molecule/`` and all non-collection repo
+    content (``.ansible``, ``.github``, ``.gitignore``, ``.gitlab-ci.yml``,
+    ``ansible/``, ``look-into.md``, ``tox.ini``, ``tox-ansible.ini``) (§2).
+  - >-
+    ``.ansible-lint`` ``var-naming[no-role-prefix]`` waiver justification re-verified:
+    44 offenders across nine roles, now all named (§15, §18, §28).
+  - >-
+    ``galaxy.yml`` dependencies now carry upper bounds (``>=x.y.z,<next-major``) and
+    declare every Galaxy collection actually used (``ansible.posix``, ``ansible.utils``,
+    ``ansible.windows``) (§2).
+  - >-
+    Role ``meta`` ``license:`` fields aligned to the collection's declared
+    ``AGPL-3.0-only`` (§2).
+  - >-
+    Task names with a trailing variable now place the variable at the end only
+    (§33).
+fixed:
+  - >-
+    ``plugins/modules/ceph_info.py`` ``RETURN`` block was not parseable YAML (an unquoted
+    ``": "`` inside a plain scalar), which broke ``ansible-doc`` and ``ansible-test sanity``.
+  - >-
+    ``scripts/conform`` syntax-check reads stdin from ``/dev/null`` so Ansible's
+    non-blocking-stdio refusal can no longer be swallowed as a bogus failure.
+  - >-
+    ``.gitignore`` excludes the ``.ansible/`` lint cache (§14).
+  - >-
+    ``command``/``shell`` tasks that had a native-module equivalent now use the module;
+    read-only probes carry a ``changed_when`` and a named lint waiver (§8).
+  - >-
+    Shell pipelines set ``pipefail``; deployed files set explicit ``owner``/``group``/
+    ``mode`` (§21, §22).
+  - >-
+    Legacy ``ansible_*`` fact reads moved to the ``ansible_facts.*`` namespace (§18).

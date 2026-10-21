@@ -1,0 +1,85 @@
+---
+- name: "Ensure the Ludus VXLAN SDN zone exists (prerequisite for cluster-sdn-setup)"
+  hosts: proxmox_master
+  gather_facts: false
+  # sdn_zone and cluster_peers (the VXLAN underlay node IPs, derived from each
+  # node's mgmt IP) are cluster config in group_vars/proxmox_cluster/sdn.yml.
+  # Override the peers for a one-off run with -e cluster_peers=ip1,ip2,ip3.
+  tasks:
+    - name: "Refuse --check"
+      ansible.builtin.assert:
+        that: not ansible_check_mode
+        fail_msg: >-
+          This play creates and applies SDN configuration with pvesh — check mode
+          cannot simulate it and must not half-run. Re-run without --check.
+        quiet: true
+
+    - name: "Fact-find: the SDN zone as it is now (absent is fine)"
+      ansible.builtin.command: "pvesh get /cluster/sdn/zones/{{ sdn_zone }} --output-format=json"
+      register: __zone_now
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: "Index whether the zone exists and its type"
+      ansible.builtin.set_fact:
+        __zone_exists: "{{ __zone_now.rc == 0 }}"
+        __zone_type: >-
+          {{ (__zone_now.stdout | from_json).type | default('')
+             if (__zone_now.rc == 0 and (__zone_now.stdout | default('') | trim).startswith('{'))
+             else '' }}
+
+    - name: "An existing zone of the wrong type is a hard stop"
+      ansible.builtin.assert:
+        that: (not __zone_exists) or (__zone_type == 'vxlan')
+        fail_msg: >-
+          SDN zone '{{ sdn_zone }}' already exists but is type '{{ __zone_type }}',
+          not vxlan. Ludus cluster mode needs a VXLAN zone. Resolve the conflict by
+          hand — this play will not convert or delete an existing zone.
+        quiet: true
+
+    - name: "Create and apply the VXLAN zone when absent"
+      when: not __zone_exists
+      block:
+        - name: "The peer list must be set to create the zone"
+          ansible.builtin.assert:
+            that: cluster_peers | length > 0
+            fail_msg: >-
+              cluster_peers is empty — a VXLAN zone needs the comma-separated node
+              IPs as its peers. Pass -e cluster_peers=ip1,ip2,ip3.
+            quiet: true
+
+        - name: "Create the pending VXLAN zone"
+          ansible.builtin.command:
+            argv: [pvesh, create, /cluster/sdn/zones, --type, vxlan, --zone, "{{ sdn_zone }}", --peers, "{{ cluster_peers }}"]
+          register: __zone_create
+          changed_when: __zone_create.rc == 0
+
+        - name: "Apply the pending SDN configuration"
+          ansible.builtin.command:
+            argv: [pvesh, set, /cluster/sdn]
+          register: __zone_apply
+          changed_when: __zone_apply.rc == 0
+
+    - name: "Re-read the zone to prove it exists as VXLAN on disk"
+      ansible.builtin.command: "pvesh get /cluster/sdn/zones/{{ sdn_zone }} --output-format=json"
+      register: __zone_after
+      changed_when: false
+      check_mode: false
+
+    - name: "The zone now exists and is VXLAN"
+      ansible.builtin.assert:
+        that:
+          - __zone_after.rc == 0
+          - (__zone_after.stdout | from_json).type | default('') == 'vxlan'
+        fail_msg: >-
+          After this play the SDN zone '{{ sdn_zone }}' is still not a VXLAN zone.
+          cluster-sdn-setup.yml will fail until it is.
+        quiet: true
+
+    - name: "Report"
+      ansible.builtin.debug:
+        msg: >-
+          SDN zone '{{ sdn_zone }}' is present (type=vxlan,
+          peers={{ (__zone_after.stdout | from_json).peers | default('(unset)', true) }}).
+          {{ 'Created this run.' if not __zone_exists else 'Already existed — no change.' }}

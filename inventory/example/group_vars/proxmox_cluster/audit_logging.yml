@@ -1,0 +1,88 @@
+---
+# Audit logging on every node (cluster-audit-logging.yml, node half): auditd
+# policy and the Sysmon for Linux configuration. The supply-chain pins the node
+# play installs from are in group_vars/all/audit_artefacts.yml.
+# Copied into place by `make config`; the copy is untracked.
+
+# Rollback (-t rollback) is destructive and must be confirmed on the command
+# line: -e audit_confirm_rollback=true.
+audit_confirm_rollback: false
+# The pool audit logs land on, and the free space it must keep.
+audit_zpool: rpool
+audit_min_free_gb: 20
+# The state directory and the ruleset file, named after the cluster
+# (cluster_slug in group_vars/all/cluster.yml).
+audit_state_dir: "/var/lib/{{ cluster_slug }}"
+audit_backlog_limit: 8192
+audit_rules_path: "/etc/audit/rules.d/zz-{{ cluster_slug }}.rules"
+# Candidate watch paths; the play keeps only the ones present on each node. Add
+# the home directory of every service account that holds a deploy or
+# forced-command key.
+audit_watch_candidates:
+  - { path: /etc/audit/, kind: dir, perm: wa, key: audit_config, why: "audit config tampering" }
+  - { path: /usr/sbin/auditctl, kind: file, perm: x, key: audit_tools, why: "audit tooling execution" }
+  - { path: /etc/passwd, kind: file, perm: wa, key: identity, why: "local account changes" }
+  - { path: /etc/shadow, kind: file, perm: wa, key: identity, why: "credential changes" }
+  - { path: /etc/group, kind: file, perm: wa, key: identity, why: "group membership changes" }
+  - { path: /etc/gshadow, kind: file, perm: wa, key: identity, why: "group credential changes" }
+  - { path: /etc/sudoers, kind: file, perm: wa, key: identity_sudo, why: "sudo policy changes" }
+  - { path: /etc/sudoers.d/, kind: dir, perm: wa, key: identity_sudo, why: "sudo policy drop-ins" }
+  - { path: /etc/ssh/sshd_config, kind: file, perm: wa, key: sshd_config, why: "sshd policy changes" }
+  - { path: /etc/ssh/sshd_config.d/, kind: dir, perm: wa, key: sshd_config, why: "sshd policy drop-ins" }
+  - { path: /root/.ssh/, kind: dir, perm: wa, key: ssh_authz, why: "cluster-wide operator key" }
+  - { path: /usr/bin/sudo, kind: file, perm: x, key: sudo_exec, why: "privilege escalation" }
+  - { path: /usr/bin/su, kind: file, perm: x, key: su_exec, why: "privilege escalation" }
+  - { path: /usr/local/sbin/, kind: dir, perm: wa, key: pct_wrapper, why: "per-service wrapper dir; watch catches add or tamper" }
+  - { path: /usr/sbin/pct, kind: file, perm: x, key: pve_guest_admin, why: "container lifecycle" }
+  - { path: /usr/sbin/qm, kind: file, perm: x, key: pve_guest_admin, why: "VM lifecycle" }
+  - { path: /usr/bin/pvesh, kind: file, perm: x, key: pve_api, why: "direct API calls" }
+  - { path: /usr/bin/pvecm, kind: file, perm: x, key: pve_cluster, why: "cluster membership changes" }
+  - { path: /usr/sbin/pveum, kind: file, perm: x, key: pve_authz, why: "users/tokens/ACLs — the real authz boundary" }
+  - { path: /usr/bin/pveceph, kind: file, perm: x, key: ceph_admin, why: "Ceph administration" }
+  - { path: /usr/bin/ceph, kind: file, perm: x, key: ceph_admin, why: "Ceph administration" }
+  - { path: /usr/sbin/zpool, kind: file, perm: x, key: zfs_admin, why: "pool-level ZFS changes" }
+  - { path: /usr/sbin/zfs, kind: file, perm: x, key: zfs_admin, why: "dataset-level ZFS changes" }
+  - { path: /etc/network/interfaces, kind: file, perm: wa, key: net_config, why: "node networking" }
+  - { path: /etc/network/interfaces.d/, kind: dir, perm: wa, key: net_config, why: "node networking drop-ins" }
+  - { path: /etc/frr/, kind: dir, perm: wa, key: frr_config, why: "OpenFabric storage mesh routing" }
+  - { path: /etc/ceph/, kind: dir, perm: wa, key: ceph_config, why: "Ceph configuration" }
+  - { path: /etc/hosts, kind: file, perm: wa, key: net_config, why: "name resolution" }
+  - { path: /etc/systemd/system/, kind: dir, perm: wa, key: persistence, why: "unit-file persistence" }
+  - { path: /etc/cron.d/, kind: dir, perm: wa, key: persistence, why: "cron persistence" }
+  - { path: /etc/crontab, kind: file, perm: wa, key: persistence, why: "cron persistence" }
+  - { path: /var/spool/cron/, kind: dir, perm: wa, key: persistence, why: "per-user cron persistence" }
+  - { path: /usr/local/sbin/, kind: dir, perm: wa, key: persistence, why: "local privileged binaries" }
+  - { path: /usr/local/bin/, kind: dir, perm: wa, key: persistence, why: "local binaries" }
+# Every config file and unit the play rewrites (captured before, restored on
+# failure).
+audit_managed_files:
+  - /etc/audit/auditd.conf
+  - "{{ audit_rules_path }}"
+  - "{{ audit_state_dir }}/auditd-conf.applied"
+  - "{{ sysmon_linux_config_path }}"
+audit_managed_units: [auditd.service, sysmon.service]
+
+# --- Sysmon for Linux (the sysmon_linux role's inputs) ----------------------
+sysmon_linux_stage_dir: "{{ audit_stage_dir }}"
+sysmon_linux_node_stage_dir: "{{ audit_node_stage_dir }}"
+sysmon_linux_artefacts: "{{ audit_artefacts }}"
+sysmon_linux_config_path: /etc/sysmon/config.xml
+sysmon_linux_schema_version: "4.90"
+sysmon_linux_hash_algorithms: "sha256"
+# NetworkConnect destinations that are intra-cluster noise: the LAN, the Ceph
+# mesh, the Ludus NAT net and the other documentation-range nets the nodes
+# use, and loopback.
+sysmon_linux_excluded_dest_prefixes:
+  - "{{ cluster_lan_prefix }}"
+  - "{{ mesh_host_prefix }}"
+  - "192.0.2."
+  - "203.0.113."
+  - "127."
+  - "::1"
+sysmon_linux_watched_paths:
+  - /etc/
+  - /root/.ssh/
+  - /usr/local/sbin/
+  - /usr/local/bin/
+  - /var/spool/cron/
+  - /lib/systemd/system/

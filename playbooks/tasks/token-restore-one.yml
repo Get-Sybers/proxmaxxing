@@ -1,0 +1,84 @@
+---
+- name: "token-restore-one | Find this user's secret in token.cfg (no_log)"
+  ansible.builtin.set_fact:
+    __tok_secret: >-
+      {{ ((__tok_cfg_raw.content | b64decode).splitlines()
+          | select('match', '^' ~ (item.proxmoxTokenID | regex_escape) ~ '[\s:=]')
+          | list | first | default(''))
+         | regex_replace('^' ~ (item.proxmoxTokenID | regex_escape) ~ '[\s:=]+', '')
+         | trim }}
+  no_log: true
+- name: "token-restore-one | Assert the token id exists in token.cfg"
+  ansible.builtin.assert:
+    that: (__tok_secret | length) > 0
+    fail_msg: >-
+      No line for token id '{{ item.proxmoxTokenID }}' in the PVE token store, so
+      {{ item.userID }}'s secret cannot be restored from it. The PVE token may
+      have been deleted — recreate it (`pveum user token add`) or drop this user
+      from the target list.
+    quiet: true
+  no_log: true
+- name: "token-restore-one | Seal the secret under the current DEK (stdin, never argv)"
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ dek_helper }}"
+  args:
+    stdin: >-
+      {{ {'op': 'encrypt', 'key': __cla_dek, 'data': (__tok_secret | b64encode)}
+         | to_json }}
+    stdin_add_newline: false
+  register: __tok_enc
+  no_log: true
+  check_mode: false
+  changed_when: false
+- name: "token-restore-one | Write proxmoxTokenSecret back via the superadmin API"
+  ansible.builtin.include_role:
+    name: get_sybers.cluster.cluster_pb_store
+    tasks_from: record_patch_fields
+  vars:
+    cluster_pb_store_collection_name: users
+    cluster_pb_store_record_id: "{{ item.id }}"
+    cluster_pb_store_record_fields: "{{ {'proxmoxTokenSecret': __tok_enc.stdout} }}"
+- name: "token-restore-one | Read the record back (never trust the write)"
+  ansible.builtin.include_role:
+    name: get_sybers.cluster.cluster_pb_store
+    tasks_from: record_read_id
+  vars:
+    cluster_pb_store_collection_name: users
+    cluster_pb_store_record_id: "{{ item.id }}"
+- name: "token-restore-one | Open the persisted ciphertext under the DEK (stdin)"
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ dek_helper }}"
+  args:
+    stdin: >-
+      {{ {'op': 'decrypt', 'key': __cla_dek,
+          'data': __pb_record_read_record.proxmoxTokenSecret} | to_json }}
+    stdin_add_newline: false
+  register: __tok_readback
+  no_log: true
+  check_mode: false
+  changed_when: false
+- name: "token-restore-one | Assert the persisted value recovers the token.cfg secret"
+  ansible.builtin.assert:
+    that: (__tok_readback.stdout | b64decode) == __tok_secret
+    fail_msg: >-
+      ROUND-TRIP MISMATCH for {{ item.userID }}: proxmoxTokenSecret persisted
+      under the current DEK does not decrypt back to the token.cfg secret. The
+      DEK in config.yml does not match what was just written, or token.cfg
+      changed during the run. Do not trust this field.
+    success_msg: >-
+      {{ item.userID }}: proxmoxTokenSecret restored from token.cfg and
+      round-trip verified under the current DEK.
+    quiet: true
+  no_log: true
+- name: "token-restore-one | Record the outcome (shape only)"
+  ansible.builtin.set_fact:
+    __tok_report: >-
+      {{ __tok_report | default([]) + [{
+           'userID': item.userID,
+           'tokenID': item.proxmoxTokenID,
+           'verified': true
+         }] }}

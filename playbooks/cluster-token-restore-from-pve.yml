@@ -1,0 +1,70 @@
+---
+- name: "Restore proxmoxTokenSecret from token.cfg under the current DEK"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: "Refuse --check (this play writes credential material)"
+      ansible.builtin.assert:
+        that: not ansible_check_mode
+        fail_msg: "This play mutates the credential store; --check is not supported."
+        quiet: true
+    - name: "Require root and the PVE token store"
+      ansible.builtin.assert:
+        that:
+          - (lookup('pipe', 'id -u')) == '0'
+          - token_cfg_path is exists
+        fail_msg: >-
+          Must run as root on a PVE node: id 0 and {{ token_cfg_path }} both
+          required (the token store is root-only and pmxcfs-local).
+        quiet: true
+    - name: "Read the current database_encryption_key (-> __cla_dek, no_log)"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: dek_read
+    - name: "Authenticate to PocketBase as superuser (-> __pb_super_token, no_log)"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_pb_store
+        tasks_from: auth_superuser
+    - name: "Read the PVE token store (root-only, no_log)"
+      ansible.builtin.slurp:
+        src: "{{ token_cfg_path }}"
+      register: __tok_cfg_raw
+      no_log: true
+    - name: "List Ludus users via PB (-> __pb_record_items, no_log)"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_pb_store
+        tasks_from: record_list
+      vars:
+        cluster_pb_store_collection_name: users
+    - name: "Select targets that actually have a token id"
+      ansible.builtin.set_fact:
+        __tok_targets: >-
+          {{ (__pb_record_items
+              | selectattr('proxmoxTokenID', 'defined')
+              | selectattr('proxmoxTokenID', 'ne', '')
+              | list)
+             | selectattr('userID', 'in', ludus_token_restore_targets) | list
+             if (ludus_token_restore_targets | length) > 0
+             else (__pb_record_items
+                   | selectattr('proxmoxTokenID', 'defined')
+                   | selectattr('proxmoxTokenID', 'ne', '')
+                   | list) }}
+      no_log: true
+    - name: "Report the target userIDs (non-secret)"
+      ansible.builtin.debug:
+        msg: >-
+          Restoring proxmoxTokenSecret for:
+          {{ __tok_targets | map(attribute='userID') | list }}
+    - name: "Re-encrypt + write + prove each target"
+      ansible.builtin.include_tasks: tasks/token-restore-one.yml
+      loop: "{{ __tok_targets }}"
+      loop_control:
+        label: "{{ item.userID }}"
+    - name: "Summary (shape only)"
+      ansible.builtin.debug:
+        msg: >-
+          Done. Restored + round-trip verified proxmoxTokenSecret for
+          {{ __tok_report | default([]) | map(attribute='userID') | list }}
+          ({{ __tok_report | default([]) | length }} user(s)). Prove end-to-end with
+          `ludus templates list` as one of them (expect HTTP 200).

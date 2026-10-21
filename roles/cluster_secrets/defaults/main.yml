@@ -1,0 +1,8 @@
+---
+cluster_secrets_backend: file
+cluster_secrets_request: {}
+cluster_secrets_vault_dir: /root/ludus-credentials
+cluster_secrets_ludus_user_id: RA
+cluster_secrets_root_vault_path: "{{ cluster_secrets_vault_dir }}/ROOT.apikey"
+cluster_secrets_root_install_path: /opt/ludus/install/root-api-key
+cluster_secrets_root_regex: 'ROOT\.[^\s]+'

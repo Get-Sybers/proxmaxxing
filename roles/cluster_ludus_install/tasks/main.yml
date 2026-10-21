@@ -1,0 +1,12 @@
+---
+- name: "Ensure the Ludus server is installed"
+  ansible.builtin.include_tasks: install.yml
+- name: "Reconcile the Ludus server config for this cluster"
+  ansible.builtin.include_tasks: config.yml
+- name: "Stage the ROOT API key into the house credential store"
+  ansible.builtin.include_tasks: root_key.yml
+  when: cluster_ludus_install_stage_root_key | bool
+- name: "Flush pending service restarts before verification"
+  ansible.builtin.meta: flush_handlers
+- name: "Verify the server and its on-disk config"
+  ansible.builtin.include_tasks: verify.yml

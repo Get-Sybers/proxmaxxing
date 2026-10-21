@@ -1,0 +1,19 @@
+---
+- name: "Validate the write mode before touching anything"
+  ansible.builtin.assert:
+    that: cluster_discover_write in ['additional', 'in_place']
+    fail_msg: "cluster_discover_write must be 'additional' or 'in_place', got '{{ cluster_discover_write }}'."
+    quiet: true
+
+- name: "Cluster admission gate (root + PVE node)"
+  ansible.builtin.include_role:
+    name: get_sybers.cluster.cluster_preflight
+
+- name: "Gather this node's facts"
+  ansible.builtin.import_tasks: gather_node.yml
+
+- name: "Gather the cluster-wide facts (once)"
+  ansible.builtin.import_tasks: gather_cluster.yml
+
+- name: "Merge the facts into the configured records and write them"
+  ansible.builtin.import_tasks: render.yml

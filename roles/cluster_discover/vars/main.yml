@@ -1,0 +1,40 @@
+---
+# Role-internal data, not inputs.
+
+# Lists of mappings merged element-wise, keyed on the identity that names an
+# element (standards: a hand annotation on a disk survives discovery because
+# the disk is matched on its device name, not its position). A dotted path
+# pins one list; a bare name applies at any depth.
+cluster_discover_node_list_keys:
+  disks: dev
+  zfs_pools: name
+  guests.templates: id
+  guests.vms: id
+  guests.cts: id
+cluster_discover_cluster_list_keys:
+  nodes: name
+  ceph.mons: name
+  ceph.pools: name
+  storage: id
+  pools: id
+  realms: realm
+  sdn.zones: zone
+  sdn.vnets: vnet
+  sdn.subnets: subnet
+  sdn.controllers: controller
+  sdn.ipams: ipam
+  sdn.fabrics: id
+  directory_mapping: id
+
+# Interfaces that are guest plumbing or loopback, not node networking.
+cluster_discover_iface_ignore: '^(lo|tap|veth|fwbr|fwpr|fwln)'
+
+# The keys kept from each SDN object (the API also returns digests and
+# pending-change bookkeeping, which are not configuration).
+cluster_discover_sdn_keys:
+  zones: [zone, type, peers, bridge, vrf_vxlan, ipam, dns, dnszone]
+  vnets: [vnet, zone, tag, vlanaware, alias]
+  subnets: [subnet, vnet, type, gateway, snat, dhcp-range, dhcp-dns-server]
+  controllers: [controller, type, asn, peers, node]
+  ipams: [ipam, type, url]
+  fabrics: [id, protocol, ip_prefix, ip6_prefix]

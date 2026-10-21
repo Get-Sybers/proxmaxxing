@@ -1,0 +1,9 @@
+---
+# Per-node As-Is record of {{ inventory_hostname }}, written by
+# playbooks/cluster-discover.yml. A fill run (the default) keeps every value
+# already here and adds what the node reports; an overwrite run
+# (-e cluster_discover_overwrite=true) replaces the discovered values and keeps
+# the annotations the node cannot report (a disk's role, an interface's purpose).
+# Desired state for this node lives in the other files of this directory, never
+# here.
+{{ {'node': __cd_node_merged} | get_sybers.cluster.to_config_yaml }}

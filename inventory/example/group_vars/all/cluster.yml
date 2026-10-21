@@ -1,0 +1,19 @@
+---
+# Cluster identity shared by every play, node-side and controller-side alike.
+# Copied into place by `make config`; the copy is untracked.
+
+# The master node hosts the Ludus server and runs every once-per-cluster step
+# (declared by membership of the proxmox_master group in hosts.yml).
+cluster_master_node: "{{ groups['proxmox_master'] | first }}"
+
+# A short name for this cluster, used in the names of the files and directories
+# the plays write on the nodes (the audit ruleset, the audit state and staging
+# directories). Letters, digits and dashes only.
+cluster_slug: get-sybers
+
+# The management LAN the nodes' mgmt IPs live on. 192.0.2.0/24 is the RFC 5737
+# documentation range standing in for yours. Nothing cluster-internal (the Ceph
+# mesh) may bind to it and no range may route into it.
+cluster_lan_cidr: 192.0.2.0/24
+# The dotted host-prefix form of the LAN ("192.0.2."), for prefix matches.
+cluster_lan_prefix: "{{ cluster_lan_cidr.split('/')[0].rsplit('.', 1)[0] ~ '.' }}"

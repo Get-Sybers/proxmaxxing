@@ -1,0 +1,429 @@
+---
+- name: "Bring up and persist the fast storage links (non-disruptive)"
+  hosts: proxmox_cluster
+  gather_facts: false
+  tasks:
+    - name: "Select this host's links"
+      ansible.builtin.set_fact:
+        __links: "{{ storage_links | default([]) }}"
+    - name: "Skip hosts with no storage links defined"
+      ansible.builtin.debug:
+        msg: "no storage links for {{ inventory_hostname }} — skipping"
+      when: __links | length == 0
+    - name: "Fact-find: the address, MTU and operstate each link has RIGHT NOW"
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          a=$(ip -o -4 addr show dev {{ item.iface }} 2>/dev/null | awk '{print $4}' | head -1)
+          m=$(cat /sys/class/net/{{ item.iface }}/mtu 2>/dev/null)
+          o=$(cat /sys/class/net/{{ item.iface }}/operstate 2>/dev/null)
+          printf '%s|%s|%s' "${a:-none}" "${m:-none}" "${o:-absent}"
+        executable: /bin/bash
+      loop: "{{ __links }}"
+      loop_control: { label: "{{ item.iface }}" }
+      register: __link_prior
+      changed_when: false
+      check_mode: false
+      failed_when: false
+    - name: "Fact-find: the current on/off state of every offload feature this play changes"
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          for f in {{ item.ethtool_off }}; do
+            case "$f" in
+              tso) key="tcp-segmentation-offload" ;;
+              gso) key="generic-segmentation-offload" ;;
+              gro) key="generic-receive-offload" ;;
+              *)   key="$f" ;;
+            esac
+            printf '%s=%s\n' "$f" "$(ethtool -k {{ item.iface }} 2>/dev/null | awk -v k="$key:" '$1==k {print $2}')"
+          done
+        executable: /bin/bash
+      loop: "{{ __links | selectattr('ethtool_off', 'defined') | list }}"
+      loop_control: { label: "{{ item.iface }} {{ item.ethtool_off }}" }
+      register: __offload_prior
+      changed_when: false
+      check_mode: false
+      failed_when: false
+    - name: "Fact-find: capture the bytes of every file this play writes"
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        checksum_algorithm: sha256
+      loop: "{{ storage_net_managed_files }}"
+      register: __sn_stat
+      check_mode: false
+    - name: "Fact-find: slurp the ones that exist"
+      ansible.builtin.slurp:
+        src: "{{ item.item }}"
+      loop: "{{ __sn_stat.results }}"
+      loop_control: { label: "{{ item.item }}" }
+      when: item.stat.exists
+      register: __sn_slurp
+      check_mode: false
+    - name: "Fact-find: is thunderbolt_net already loaded?"
+      ansible.builtin.shell:
+        cmd: "set -o pipefail; lsmod | awk '$1==\"thunderbolt_net\" {print \"loaded\"}'"
+        executable: /bin/bash
+      register: __tbmod_prior
+      changed_when: false
+      check_mode: false
+      failed_when: false
+    - name: "Fact-find: which interface carries this node's Ansible control path?"
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          addr="{{ ansible_host | default(inventory_hostname) }}"
+          dev=$(ip -o -4 addr show | awk -v a="^$addr/" '$4 ~ a {print $2; exit}')
+          [ -n "$dev" ] || dev=$(ip route get "$addr" 2>/dev/null | grep -oP 'dev \K\S+' | head -1)
+          echo "$dev"
+          ls /sys/class/net/"$dev"/brif/ 2>/dev/null | tr '\n' ' '
+        executable: /bin/bash
+      register: __ctrl_path
+      changed_when: false
+      check_mode: false
+      failed_when: false
+    - name: "Fact-find: index the captured prior state per item"
+      ansible.builtin.set_fact:
+        __prior_links: >-
+          {{ __prior_links | default({}) | combine({ item.item.iface: {
+               'addr': item.stdout.split('|')[0],
+               'mtu': item.stdout.split('|')[1],
+               'operstate': item.stdout.split('|')[2] | default('absent') } }) }}
+      loop: "{{ __link_prior.results | default([]) }}"
+      loop_control: { label: "{{ item.item.iface }}" }
+    - name: "Fact-find: index the captured offload state per interface+feature"
+      ansible.builtin.set_fact:
+        __prior_offloads: >-
+          {{ __prior_offloads | default({}) | combine({ item.0.item.iface ~ '/' ~ (item.1.split('=')[0]):
+               item.1.split('=')[1] | default('unknown') }) }}
+      loop: "{{ __offload_prior.results | default([]) | subelements('stdout_lines', skip_missing=True) }}"
+      loop_control: { label: "{{ item.0.item.iface }} {{ item.1 }}" }
+    - name: "Fact-find: index the captured file state per file"
+      ansible.builtin.set_fact:
+        __prior_sn_files: >-
+          {{ __prior_sn_files | default({}) | combine({ item.0.item: {
+               'existed': item.0.stat.exists,
+               'mode': item.0.stat.mode | default('0644'),
+               'sha256': item.0.stat.checksum | default(''),
+               'b64': item.1.content | default(''),
+               'captured': item.1.content is defined } }) }}
+      loop: "{{ __sn_stat.results | zip(__sn_slurp.results) | list }}"
+      loop_control: { label: "{{ item.0.item }}" }
+    - name: "Fact-find: report the prior state a rescue would put back"
+      ansible.builtin.debug:
+        msg: |-
+          {{ inventory_hostname }} — state captured BEFORE any change:
+          links (only the ones THIS RUN brings up are ever torn down again):
+          {% for l in __links %}
+            {{ l.iface }}: addr {{ __prior_links[l.iface].addr }}, mtu {{ __prior_links[l.iface].mtu }},
+                           operstate {{ __prior_links[l.iface].operstate }}  -> target {{ l.address }} mtu {{ l.mtu }}
+                           ({{ 'ALREADY at target — rescue will NOT touch it' if __prior_links[l.iface].addr == l.address
+                               else 'this run will bring it up; rescue can tear it back down' }})
+          {% endfor %}
+          offload features (restored per feature):
+          {% for k, v in (__prior_offloads | default({})).items() %}
+            {{ k }} = {{ v }}
+          {% endfor %}
+          files (restored byte-for-byte):
+          {% for n, f in __prior_sn_files.items() %}
+            {{ n }}: {{ ('present, ' ~ f.mode ~ ', sha256 ' ~ f.sha256[:12] ~ '…') if f.existed else 'ABSENT (rescue would delete it again)' }}
+          {% endfor %}
+          thunderbolt_net: {{ 'loaded' if 'loaded' in __tbmod_prior.stdout else 'NOT loaded' }} (never unloaded — see the header)
+          Ansible control path egresses: {{ __ctrl_path.stdout_lines[0] | default('?') }}
+            (bridge ports: {{ __ctrl_path.stdout_lines[1] | default('none') }})
+    - name: "Preflight: the storage links are NOT the Ansible control path"
+      ansible.builtin.assert:
+        that:
+          - (__ctrl_path.stdout_lines[0] | default('')) not in (__links | map(attribute='iface') | list)
+          - (__links | map(attribute='iface') | list)
+            | intersect((__ctrl_path.stdout_lines[1] | default('')).split())
+            | length == 0
+        success_msg: >-
+          Control path egresses {{ __ctrl_path.stdout_lines[0] | default('?') }}, which is not
+          a storage link and does not bridge one — a rescue on this node is deliverable.
+        fail_msg: >-
+          REFUSING TO RUN on {{ inventory_hostname }}: Ansible reaches this node over
+          {{ __ctrl_path.stdout_lines[0] | default('?') }} (bridge ports:
+          {{ __ctrl_path.stdout_lines[1] | default('none') }}), which is or bridges one of the
+          storage links this play reconfigures ({{ __links | map(attribute='iface') | list }}).
+          A failure would make this host UNREACHABLE and no rescue could be delivered.
+      when: __links | length > 0
+    - name: "Preflight: every prior value needed for a rollback was captured"
+      ansible.builtin.assert:
+        that:
+          - __prior_sn_files | length == storage_net_managed_files | length
+          - __prior_links | default({}) | length == __links | length
+          - __prior_sn_files.values() | selectattr('existed') | rejectattr('captured') | list | length == 0
+        success_msg: >-
+          Prior state captured: {{ __links | length }} links,
+          {{ (__prior_offloads | default({})) | length }} offload features,
+          {{ __prior_sn_files | length }} files.
+        fail_msg: >-
+          Refusing to reconfigure the storage network: part of the prior state could not be
+          read, so it could not be put back on failure.
+      when: __links | length > 0
+    - name: "Bring up the storage links, prove they came up, and restore the prior state if not"
+      when: __links | length > 0
+      block:
+        - name: "Ensure thunderbolt_net loads at boot (TB hosts)"
+          ansible.builtin.copy:
+            dest: /etc/modules-load.d/thunderbolt-net.conf
+            content: "thunderbolt_net\n"
+            owner: root
+            group: root
+            mode: "0644"
+          when: __links | selectattr('module', 'defined') | list | length > 0
+          register: __tbmod
+        - name: "Load thunderbolt_net now (idempotent)"
+          community.general.modprobe:
+            name: thunderbolt_net
+            state: present
+          when: __links | selectattr('module', 'defined') | list | length > 0
+        - name: "Ensure hotplug links ifup when their netdev appears (udev)"
+          ansible.builtin.template:
+            src: templates/storage-net-hotplug.rules.j2
+            dest: /etc/udev/rules.d/90-storage-net-hotplug.rules
+            owner: root
+            group: root
+            mode: "0644"
+          when: __links | selectattr('module', 'defined') | list | length > 0
+          register: __udevrule
+        # udev reload must run inline before the interface stanzas are written, not deferred to a handler.
+        - name: "Reload udev rules"  # noqa: no-handler
+          ansible.builtin.command: udevadm control --reload
+          changed_when: true
+          when: __udevrule.changed
+        - name: "Write the storage-network interface stanzas"
+          ansible.builtin.template:
+            src: templates/storage-net.interfaces.j2
+            dest: /etc/network/interfaces.d/storage-net
+            owner: root
+            group: root
+            mode: "0644"
+          register: __ifcfg
+        - name: "Confirm interfaces.d is sourced (it must be for this to take effect)"
+          ansible.builtin.command: grep -q '^source /etc/network/interfaces.d/' /etc/network/interfaces
+          register: __sourced
+          changed_when: false
+          failed_when: __sourced.rc != 0
+        - name: "Bring up each storage link"
+          ansible.builtin.shell:
+            cmd: |
+              set -o pipefail
+              cur=$(ip -o -4 addr show dev {{ item.iface }} 2>/dev/null | awk '{print $4}')
+              if [ "$cur" = "{{ item.address }}" ]; then
+                echo "already up"
+              else
+                ifup {{ item.iface }} 2>&1 || ip addr add {{ item.address }} dev {{ item.iface }} 2>/dev/null
+                ip link set {{ item.iface }} mtu {{ item.mtu }} up 2>/dev/null
+                echo "brought up"
+              fi
+            executable: /bin/bash
+          loop: "{{ __links }}"
+          loop_control: { label: "{{ item.iface }} {{ item.address }}" }
+          register: __ifup
+          changed_when: "'brought up' in __ifup.stdout"
+        - name: "Apply required-off offload features"
+          ansible.builtin.shell:
+            cmd: |
+              set -o pipefail
+              changed=0
+              for f in {{ item.ethtool_off }}; do
+                case "$f" in
+                  tso) key="tcp-segmentation-offload" ;;
+                  gso) key="generic-segmentation-offload" ;;
+                  gro) key="generic-receive-offload" ;;
+                  *)   key="$f" ;;
+                esac
+                line=$(ethtool -k {{ item.iface }} | awk -v k="$key:" '$1==k {print $0}')
+                cur=$(echo "$line" | awk '{print $2}')
+                if [ "$cur" != "off" ]; then
+                  if echo "$line" | grep -q '\[fixed\]'; then
+                    echo "ERROR: $f is fixed-on on {{ item.iface }} — required-off feature cannot be disabled" >&2
+                    exit 1
+                  fi
+                  ethtool -K {{ item.iface }} $f off; changed=1
+                fi
+              done
+              [ "$changed" -eq 1 ] && echo "applied" || echo "already off"
+            executable: /bin/bash
+          loop: "{{ __links | selectattr('ethtool_off', 'defined') | list }}"
+          loop_control: { label: "{{ item.iface }} -{{ item.ethtool_off }}" }
+          register: __ethtool
+          changed_when: "'applied' in __ethtool.stdout"
+        - name: "Post-check: re-read each link's address and MTU"
+          ansible.builtin.shell:
+            cmd: |
+              set -o pipefail
+              a=$(ip -o -4 addr show dev {{ item.iface }} 2>/dev/null | awk '{print $4}' | head -1)
+              m=$(cat /sys/class/net/{{ item.iface }}/mtu 2>/dev/null)
+              printf '%s|%s' "${a:-none}" "${m:-none}"
+            executable: /bin/bash
+          loop: "{{ __links }}"
+          loop_control: { label: "{{ item.iface }}" }
+          register: __link_after
+          changed_when: false
+        - name: "POST-CHECK: every link carries its target address at its target MTU"
+          ansible.builtin.assert:
+            that:
+              - __link_after.results | map(attribute='stdout') | list
+                == __links | map(attribute='address') | zip(__links | map(attribute='mtu') | map('string')) | map('join', '|') | list
+            success_msg: >-
+              {{ inventory_hostname }}: all {{ __links | length }} storage links carry their
+              target address and MTU as read back from the kernel.
+            fail_msg: |-
+              Storage links are NOT in the intended state after configuring them.
+              {% for l in __links %}
+                {{ l.iface }}: want {{ l.address }}|{{ l.mtu }}, kernel reports {{ __link_after.results[loop.index0].stdout }}
+              {% endfor %}
+        - name: "Test each link to its peer"
+          ansible.builtin.command: "ping -c2 -W2 -I {{ item.iface }} {{ item.peer }}"
+          loop: "{{ __links }}"
+          loop_control: { label: "{{ item.iface }} -> {{ item.peer }} ({{ item.role }})" }
+          register: __ping
+          changed_when: false
+          failed_when: false
+        - name: "Report link status"
+          ansible.builtin.debug:
+            msg: >-
+              {{ inventory_hostname }} {{ item.item.iface }} ({{ item.item.role }})
+              -> {{ item.item.peer }}: {{ 'UP' if item.rc == 0 else 'NO LINK (cable not connected?)' }}
+          loop: "{{ __ping.results }}"
+          loop_control: { label: "{{ item.item.iface }}" }
+      rescue:
+        - name: "Rescue: restore the bytes of every managed file that EXISTED"
+          ansible.builtin.copy:
+            content: "{{ item.value.b64 | b64decode }}"
+            dest: "{{ item.key }}"
+            owner: root
+            group: root
+            mode: "{{ item.value.mode }}"
+          loop: "{{ __prior_sn_files | dict2items | selectattr('value.existed') | list }}"
+          loop_control: { label: "{{ item.key }} <- {{ item.value.sha256[:12] }}…" }
+          register: __sn_restore_present
+          failed_when: false
+        - name: "Rescue: delete every managed file that did NOT exist"
+          ansible.builtin.file:
+            path: "{{ item.key }}"
+            state: absent
+          loop: "{{ __prior_sn_files | dict2items | rejectattr('value.existed') | list }}"
+          loop_control: { label: "{{ item.key }} <- back to ABSENT" }
+          register: __sn_restore_absent
+          failed_when: false
+        - name: "Rescue: reload udev against the restored rules"
+          ansible.builtin.command: udevadm control --reload
+          register: __sn_restore_udev
+          changed_when: true
+          failed_when: false
+        - name: "Rescue: restore each offload feature to its own captured state"
+          ansible.builtin.command:
+            argv: [ethtool, -K, "{{ item.key.split('/')[0] }}", "{{ item.key.split('/')[1] }}", "{{ item.value }}"]
+          loop: "{{ (__prior_offloads | default({})) | dict2items }}"
+          loop_control: { label: "{{ item.key }} <- {{ item.value }}" }
+          when: item.value in ['on', 'off']
+          register: __sn_restore_offload
+          changed_when: true
+          failed_when: false
+        - name: "Rescue: tear back down ONLY the links this run brought up"
+          ansible.builtin.shell:
+            cmd: |
+              set -o pipefail
+              ip addr del {{ item.address }} dev {{ item.iface }} 2>/dev/null || true
+              {% if __prior_links[item.iface].addr not in ['none', ''] %}
+              ip addr add {{ __prior_links[item.iface].addr }} dev {{ item.iface }} 2>/dev/null || true
+              {% endif %}
+              {% if __prior_links[item.iface].mtu not in ['none', ''] %}
+              ip link set dev {{ item.iface }} mtu {{ __prior_links[item.iface].mtu }} 2>/dev/null || true
+              {% endif %}
+              {% if __prior_links[item.iface].operstate in ['down'] %}
+              ip link set dev {{ item.iface }} down 2>/dev/null || true
+              {% endif %}
+              echo restored
+            executable: /bin/bash
+          loop: "{{ __links }}"
+          loop_control: { label: "{{ item.iface }} <- {{ __prior_links[item.iface].addr }} mtu {{ __prior_links[item.iface].mtu }}" }
+          when: __prior_links[item.iface].addr != item.address
+          register: __sn_restore_links
+          changed_when: true
+          failed_when: false
+        - name: "Rescue verify: re-stat every managed file"
+          ansible.builtin.stat:
+            path: "{{ item.key }}"
+            checksum_algorithm: sha256
+          loop: "{{ __prior_sn_files | dict2items }}"
+          loop_control: { label: "{{ item.key }}" }
+          register: __sn_restore_stat
+          check_mode: false
+          failed_when: false
+        - name: "Rescue verify: re-read each link's address, MTU and operstate"
+          ansible.builtin.shell:
+            cmd: |
+              set -o pipefail
+              a=$(ip -o -4 addr show dev {{ item.iface }} 2>/dev/null | awk '{print $4}' | head -1)
+              m=$(cat /sys/class/net/{{ item.iface }}/mtu 2>/dev/null)
+              o=$(cat /sys/class/net/{{ item.iface }}/operstate 2>/dev/null)
+              printf '%s|%s|%s' "${a:-none}" "${m:-none}" "${o:-absent}"
+            executable: /bin/bash
+          loop: "{{ __links }}"
+          loop_control: { label: "{{ item.iface }}" }
+          register: __sn_link_after
+          changed_when: false
+          failed_when: false
+        - name: "Rescue verify: compare, file by file"
+          ansible.builtin.set_fact:
+            __sn_file_verdicts: >-
+              {{ __sn_file_verdicts | default([]) + [{
+                   'file': item.item.key,
+                   'was': ('sha256 ' ~ item.item.value.sha256[:12] ~ '…') if item.item.value.existed else 'ABSENT',
+                   'now': ('sha256 ' ~ (item.stat.checksum | default('?'))[:12] ~ '…') if item.stat.exists | default(false) else 'ABSENT',
+                   'ok': (item.stat.exists | default(false)) == item.item.value.existed
+                         and ((item.stat.checksum | default('')) == item.item.value.sha256
+                              if item.item.value.existed else true) }] }}
+          loop: "{{ __sn_restore_stat.results }}"
+          loop_control: { label: "{{ item.item.key }}" }
+        - name: "Rescue verify: compare, link by link"
+          ansible.builtin.set_fact:
+            __sn_link_verdicts: >-
+              {{ __sn_link_verdicts | default([]) + [{
+                   'iface': item.item.iface,
+                   'was': __prior_links[item.item.iface].addr ~ ' mtu ' ~ __prior_links[item.item.iface].mtu,
+                   'now': (item.stdout | default('?|?|?')).split('|')[0] ~ ' mtu ' ~ (item.stdout | default('?|?|?')).split('|')[1],
+                   'touched': __prior_links[item.item.iface].addr != item.item.address
+                              or __prior_links[item.item.iface].mtu | string != item.item.mtu | string,
+                   'ok': (item.stdout | default('')).split('|')[0] == __prior_links[item.item.iface].addr
+                         and (item.stdout | default('|')).split('|')[1] == __prior_links[item.item.iface].mtu | string }] }}
+          loop: "{{ __sn_link_after.results }}"
+          loop_control: { label: "{{ item.item.iface }}" }
+        - name: "Rescue verify: the rollback verdict"
+          ansible.builtin.set_fact:
+            __sn_verdict: >-
+              {{ (__sn_file_verdicts | rejectattr('ok') | list | length) == 0
+                 and (__sn_link_verdicts | rejectattr('ok') | list | length) == 0 }}
+        - name: "Rescue: fail reporting the original error AND the rollback verdict"
+          ansible.builtin.fail:
+            msg: |-
+              STORAGE NETWORK CHANGE FAILED ON {{ inventory_hostname }}{{ ' AND WAS ROLLED BACK' if __sn_verdict | bool else ' — ROLLBACK INCOMPLETE' }}.
+              (1) ORIGINAL FAILURE — task '{{ ansible_failed_task.name | default('unknown') }}':
+                  {{ ansible_failed_result.msg | default(ansible_failed_result) | default('(no result captured)') }}
+                  {{ (ansible_failed_result.stderr | default('')) | truncate(400) }}
+              (2) ROLLBACK: {{ "VERIFIED — every managed file and every link was re-read and matches what the fact-find captured."
+                               if __sn_verdict | bool else
+                               "NOT VERIFIED — at least one item does NOT match what was captured, so the storage network on
+                                this node is in an UNKNOWN state and needs manual inspection." }}
+              {% for v in __sn_file_verdicts %}
+                  {{ 'OK  ' if v.ok else 'FAIL' }} {{ v.file }}: captured={{ v.was }} now={{ v.now }}
+              {% endfor %}
+              {% for v in __sn_link_verdicts %}
+                  {{ 'OK  ' if v.ok else 'FAIL' }} {{ v.iface }}: captured={{ v.was }} now={{ v.now }}
+                       ({{ 'this run brought it up, so the rescue tore it back down' if v.touched
+                            else 'already at target before this run — deliberately NOT touched' }})
+              {% endfor %}
+                  udev reloaded against the restored rules: {{ 'yes' if (__sn_restore_udev.rc | default(1)) == 0 else 'NO' }}
+                  offload restores: {{ __sn_restore_offload.results | default([]) | selectattr('rc', 'defined') | map(attribute='rc') | list }}
+              (3) NOT ROLLED BACK, DELIBERATELY (see the play header):
+                  - thunderbolt_net stays loaded. It was
+                    {{ 'already loaded before this run' if 'loaded' in __tbmod_prior.stdout else 'loaded BY THIS RUN' }};
+                    unloading it tears down thunderbolt0, which carries Ceph client I/O.
+                  - links that were already at their target address before this run.
+                  - the PEER node's half of any point-to-point link.
+                  - a host Ansible can no longer reach: no rescue is deliverable to it at all.

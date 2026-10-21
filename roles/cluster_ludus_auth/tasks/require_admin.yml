@@ -1,0 +1,10 @@
+---
+- name: "require_admin | Assert the identity is a Ludus admin"
+  ansible.builtin.assert:
+    that: cluster_ludus_auth_is_admin | bool
+    fail_msg: >-
+      '{{ cluster_ludus_auth_user }}' authenticated (HTTP
+      {{ cluster_ludus_auth_status }}) but is NOT a Ludus admin, and this
+      play's actions require one.
+    success_msg: "userID={{ cluster_ludus_auth_user }} is a Ludus admin."
+    quiet: true

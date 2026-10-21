@@ -1,0 +1,48 @@
+---
+argument_specs:
+  get:
+    short_description: "Fetch a secret from the configured backend and return it as cluster_secrets_result."
+    description:
+      - >-
+        Dispatches to the file or keychain backend, returns the secret as the
+        registered fact cluster_secrets_result (dict with value and present keys). All tasks
+        use no_log to prevent credential leakage.
+    options:
+      cluster_secrets_backend:
+        type: str
+        required: false
+        default: "file"
+        choices: ["file", "keychain"]
+        description: "Secret backend to use. file reads from a host path; keychain delegates to the OS keychain."
+      cluster_secrets_request:
+        type: dict
+        required: false
+        default: {}
+        description: >-
+          Secret request dict. Must contain at minimum name (logical label).
+          For the file backend: path (required), regex (optional token extractor),
+          required (bool, default true).
+      cluster_secrets_vault_dir:
+        type: str
+        required: false
+        default: "/root/ludus-credentials"
+        description: "Root directory of the credential store used by convenience entry points."
+      cluster_secrets_root_vault_path:
+        type: str
+        required: false
+        description: "Path to the ROOT API key in the vault (computed from cluster_secrets_vault_dir)."
+      cluster_secrets_root_install_path:
+        type: str
+        required: false
+        default: "/opt/ludus/install/root-api-key"
+        description: "Fallback path where Ludus installs the ROOT key at bootstrap."
+      cluster_secrets_root_regex:
+        type: str
+        required: false
+        default: "ROOT\\.[^\\s]+"
+        description: "Regex to extract the ROOT API key token from a potentially-labeled file."
+      cluster_secrets_ludus_user_id:
+        type: str
+        required: false
+        default: "RA"
+        description: "Operational Ludus user ID (used by the ludus_user_key entry point)."

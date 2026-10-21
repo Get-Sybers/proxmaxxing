@@ -1,0 +1,68 @@
+---
+- name: "The vault holds exactly one at-rest entry (the RA key)"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: "Cluster admission gate"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_preflight
+    - name: "Read the vault dataset's ZFS properties"
+      community.general.zfs_facts:
+        name: "{{ vault_invariant_dataset }}"
+        properties: keystatus,mounted
+      register: __vault_zfs
+      check_mode: false
+    - name: "Derive the keystatus fact"
+      ansible.builtin.set_fact:
+        __vault_keystatus: >-
+          {{ (__vault_zfs.ansible_facts.ansible_zfs_datasets | first).keystatus }}
+    - name: "Vault is LOCKED — invariant not evaluable, fail distinctly"
+      ansible.builtin.fail:
+        msg: >-
+          vault is LOCKED — invariant NOT EVALUABLE.
+          {{ vault_invariant_dataset }} keystatus={{ __vault_keystatus }}: the
+          mountpoint is an empty directory, so the listing proves nothing
+          either way. This is NOT the 'VIOLATED' verdict — it is a distinct
+          non-pass so a composing play never reads a locked vault as green.
+          Unlock the vault (/usr/local/sbin/unlock-credentials) — or,
+          passphrase lost, reset it via cluster-credentials-vault.yml
+          -e vault_reset=true — then re-run. Meanwhile RA's live key is homed
+          in PocketBase (gs_infra_credentials RA.apikey); authenticate with
+          ludus-ra-auth.yml, then run ludus directly.
+      when: __vault_keystatus != 'available'
+    - name: "List every entry in the vault directory"
+      ansible.builtin.find:
+        paths: "{{ vault_invariant_dir }}"
+        file_type: any
+        hidden: true
+        recurse: false
+      register: __vault_listing
+      no_log: true
+      check_mode: false
+    - name: "Derive NON-SECRET shape facts (counts + expected-match only)"
+      ansible.builtin.set_fact:
+        __vault_count: "{{ __vault_listing.files | length }}"
+        __vault_matches_expected: >-
+          {{ (__vault_listing.files | map(attribute='path') | map('basename') | sort | list)
+             == (vault_invariant_expected | sort | list) }}
+      no_log: true
+    - name: "Assert the vault holds exactly the expected entry"
+      ansible.builtin.assert:
+        that: __vault_matches_expected | bool
+        fail_msg: >-
+          VAULT INVARIANT VIOLATED: {{ vault_invariant_dir }} holds
+          {{ __vault_count }} entr(y/ies) where exactly
+          {{ vault_invariant_expected | length }} is expected
+          ({{ vault_invariant_expected | join(', ') }}). Any additional at-rest
+          key is DESIGN DRIFT, not a convenience: the recorded invariant
+          (docket 2026-08-04-post-change-board, operator ruling 2026-08-05) is
+          that RA's key is the only key on disk in the vault — every other
+          identity authenticates via PocketBase or the PAM keychain. List the
+          directory as root to see what is there; treat the extra entry as a
+          finding.
+        success_msg: >-
+          Vault invariant holds: {{ vault_invariant_dir }} contains exactly
+          {{ vault_invariant_expected | length }} entry
+          ({{ vault_invariant_expected | join(', ') }}).
+        quiet: true

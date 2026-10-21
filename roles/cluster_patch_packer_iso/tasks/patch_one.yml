@@ -1,0 +1,42 @@
+---
+- name: "patch_one | Read {{ pi_path | basename }}"
+  ansible.builtin.slurp:
+    src: "{{ pi_path }}"
+  register: __pi_raw
+  check_mode: false
+- name: "patch_one | Extract this template's declared checksum"
+  ansible.builtin.set_fact:
+    __pi_text: "{{ __pi_raw.content | b64decode }}"
+    __pi_chk: >-
+      {{ ((__pi_raw.content | b64decode
+           | regex_search('variable\s+"iso_checksum"\s*\{[^}]*default\s*=\s*"(sha256:[0-9a-fA-F]{64})"', '\1'))
+          or ['']) | first | lower }}
+    __pi_any_algo: >-
+      {{ ((__pi_raw.content | b64decode
+           | regex_search('variable\s+"iso_checksum"\s*\{[^}]*default\s*=\s*"([a-z0-9]+):[0-9a-fA-F]+"', '\1'))
+          or ['']) | first }}
+- name: "patch_one | Decide"
+  ansible.builtin.set_fact:
+    __pi_action: >-
+      {{ 'already' if 'LOCAL PATCH (ISO-REDIRECT)' in __pi_text
+         else ('redirect' if (__pi_chk | length > 0 and __pi_chk in __pi_usable) else 'skip') }}
+    __pi_target: "{{ __pi_usable[__pi_chk] | default('') }}"
+- name: "patch_one | Record"
+  ansible.builtin.set_fact:
+    __pi_results: >-
+      {{ (__pi_results | default([])) + [{
+           'template': pi_path | regex_replace('^/opt/ludus/', ''),
+           'action': __pi_action,
+           'checksum': __pi_chk | default('(none declared)', true),
+           'iso_file': __pi_target,
+           'reason': ('already carries the marker' if __pi_action == 'already'
+                      else ('we hold this sha256 on the build node' if __pi_action == 'redirect'
+                            else ('declares a ' ~ __pi_any_algo ~ ' checksum, which this sha256-keyed manifest cannot match'
+                                  if (__pi_chk | length == 0 and __pi_any_algo | length > 0)
+                                  else ('no iso_checksum declared' if __pi_chk | length == 0
+                                        else 'not held on the build node — left downloading')))) }] }}
+- name: "patch_one | Redirect this template"
+  ansible.builtin.include_tasks: redirect_one.yml
+  when:
+    - cluster_patch_packer_iso_apply | bool
+    - __pi_action == 'redirect'

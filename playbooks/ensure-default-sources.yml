@@ -1,0 +1,173 @@
+---
+- name: "Ensure the Get-Sybers default sources are registered (and the monolith is gone)"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: "Refuse --check (this play issues live source add/rm calls)"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: refuse_check
+    - name: "Require an exported LUDUS_API_KEY and adopt it"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: require_caller_key
+    - name: "Prove the caller's key at /whoami and assert it is an admin"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: prove_caller
+    - name: "Decide whether to impersonate the target owner"
+      ansible.builtin.set_fact:
+        __ds_impersonate: >-
+          {{ ('--user ' ~ default_sources_owner)
+             if __cla_caller_user != default_sources_owner else '' }}
+    - name: "Derive the full sourceID for each desired source"
+      ansible.builtin.set_fact:
+        __ds_desired: >-
+          {{ __ds_desired | default([])
+             + [ { 'id': default_sources_owner ~ '-' ~ default_sources_org_slug ~ '-' ~ item.slug,
+                   'url': item.url } ] }}
+      loop: "{{ default_sources }}"
+      loop_control:
+        label: "{{ item.slug }}"
+    - name: "List every registered source as JSON"
+      ansible.builtin.command: ludus source list --json
+      environment:
+        LUDUS_API_KEY: "{{ __cla_api_key }}"
+      register: __ds_list
+      changed_when: false
+      failed_when: __ds_list.rc != 0
+      no_log: true
+      check_mode: false
+    - name: "Parse the registered sources"
+      ansible.builtin.set_fact:
+        __ds_registered: "{{ __ds_list.stdout | default('[]') | from_json }}"
+    - name: "Select what to add and what to purge"
+      ansible.builtin.set_fact:
+        __ds_to_add: >-
+          {{ __ds_desired
+             | rejectattr('id', 'in', __ds_registered | map(attribute='sourceID') | list)
+             | list }}
+        __ds_to_remove: >-
+          {{ ((__ds_registered | selectattr('sourceID', 'in', default_sources_remove_ids) | list)
+              + ((__ds_registered | selectattr('url', 'defined')
+                  | selectattr('url', 'search', '(?i)' ~ default_sources_remove_url_match) | list)
+                 if (default_sources_remove_url_match | length > 0) else []))
+             | unique }}
+    - name: "Report the intended changes"
+      ansible.builtin.debug:
+        msg: >-
+          owner={{ default_sources_owner }};
+          {{ __ds_registered | length }} source(s) registered now;
+          add {{ __ds_to_add | length }}
+          {{ (': ' ~ (__ds_to_add | map(attribute='id') | join(', '))) if __ds_to_add | length else '' }};
+          purge {{ __ds_to_remove | length }}
+          {{ (': ' ~ (__ds_to_remove | map(attribute='sourceID') | join(', '))) if __ds_to_remove | length else '' }}.
+    - name: "Remove each retired source"
+      ansible.builtin.command: "ludus source rm {{ item.sourceID }}"
+      environment:
+        LUDUS_API_KEY: "{{ __cla_api_key }}"
+      loop: "{{ __ds_to_remove }}"
+      loop_control:
+        label: "{{ item.sourceID }} ({{ item.url | default('n/a') }})"
+      register: __ds_rm
+      changed_when: __ds_rm.rc == 0
+      failed_when: false
+      no_log: true
+    - name: "Per-source removal result (key-shaped tokens scrubbed)"
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.item.sourceID }}:
+          {{ 'removed' if item.rc == 0 else
+             ('FAILED rc=' ~ item.rc ~ ' — ' ~
+              ((item.stderr | default('')) ~ ' ' ~ (item.stdout | default(''))
+               | regex_replace('[A-Za-z0-9_-]+\\.[A-Za-z0-9._+/=-]{20,}', '<redacted>') | trim)) }}
+      loop: "{{ __ds_rm.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.sourceID }}"
+      when: __ds_rm.results is defined
+    - name: "Fail if any removal errored"
+      ansible.builtin.assert:
+        that: (__ds_rm.results | default([]) | rejectattr('rc', 'equalto', 0) | list | length) == 0
+        fail_msg: >-
+          {{ __ds_rm.results | rejectattr('rc', 'equalto', 0) | map(attribute='item')
+             | map(attribute='sourceID') | join(', ') }} failed to remove — see the
+          per-source lines above for the scrubbed CLI output.
+        quiet: true
+    - name: "Add each missing default source as {{ default_sources_owner }}"
+      ansible.builtin.command: >-
+        ludus {{ __ds_impersonate }} source add {{ item.url }}
+        --id {{ item.id }} --ref {{ default_sources_ref }} --all
+      environment:
+        LUDUS_API_KEY: "{{ __cla_api_key }}"
+      loop: "{{ __ds_to_add }}"
+      loop_control:
+        label: "{{ item.id }}"
+      register: __ds_add
+      changed_when: __ds_add.rc == 0
+      failed_when: false
+      no_log: true
+    - name: "Per-source add result (key-shaped tokens scrubbed)"
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.item.id }}:
+          {{ 'registered' if item.rc == 0 else
+             ('FAILED rc=' ~ item.rc ~ ' — ' ~
+              ((item.stderr | default('')) ~ ' ' ~ (item.stdout | default(''))
+               | regex_replace('[A-Za-z0-9_-]+\\.[A-Za-z0-9._+/=-]{20,}', '<redacted>') | trim)) }}
+      loop: "{{ __ds_add.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.id }}"
+      when: __ds_add.results is defined
+    - name: "Fail if any add did not succeed"
+      ansible.builtin.assert:
+        that: (__ds_add.results | default([]) | rejectattr('rc', 'equalto', 0) | list | length) == 0
+        fail_msg: >-
+          {{ __ds_add.results | rejectattr('rc', 'equalto', 0) | map(attribute='item')
+             | map(attribute='id') | join(', ') }} failed to register. For a private
+          repo this is usually the Ludus host's git credentials — check them, then
+          re-run. See the per-source lines above for the scrubbed CLI output.
+        quiet: true
+    - name: "Re-list every registered source"
+      ansible.builtin.command: ludus source list --json
+      environment:
+        LUDUS_API_KEY: "{{ __cla_api_key }}"
+      register: __ds_after
+      changed_when: false
+      failed_when: __ds_after.rc != 0
+      no_log: true
+      check_mode: false
+    - name: "Index the sourceIDs now present"
+      ansible.builtin.set_fact:
+        __ds_after_ids: "{{ (__ds_after.stdout | default('[]') | from_json) | map(attribute='sourceID') | list }}"
+    - name: "Every desired default source is registered"
+      ansible.builtin.assert:
+        that: item.id in __ds_after_ids
+        fail_msg: >-
+          '{{ item.id }}' ({{ item.url }}) is still not registered after the add
+          reported success — investigate before relying on it.
+        quiet: true
+      loop: "{{ __ds_desired }}"
+      loop_control:
+        label: "{{ item.id }}"
+    - name: "Every purged source is gone"
+      ansible.builtin.assert:
+        that: item.sourceID not in __ds_after_ids
+        fail_msg: "'{{ item.sourceID }}' is still registered after removal."
+        quiet: true
+      loop: "{{ __ds_to_remove }}"
+      loop_control:
+        label: "{{ item.sourceID }}"
+    - name: "Summary"
+      ansible.builtin.debug:
+        msg: >-
+          Ludus now has {{ __ds_after_ids | length }} source(s).
+          Desired defaults present: {{ __ds_desired | length }}/{{ __ds_desired | length }}
+          (owner {{ default_sources_owner }}).
+          Added this run: {{ __ds_to_add | length }}; purged: {{ __ds_to_remove | length }}.
+          Templates are registered, not built (ludus templates build -n <name>);
+          blueprints are not applied (ludus blueprint apply <sourceID>/<id>).
+    - name: "Forget the adopted key"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: forget

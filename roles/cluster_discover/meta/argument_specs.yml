@@ -1,0 +1,107 @@
+---
+argument_specs:
+  main:
+    short_description: "Discover the live cluster and fill the inventory's As-Is records from it."
+    description:
+      - >-
+        Runs the cluster admission gate, gathers this node's facts (PVE version,
+        corosync membership, block devices, ZFS pools, interfaces, guests) and,
+        once per run, the cluster-wide facts (cluster status, node fingerprints,
+        storage, users/groups/roles/realms, pools, SDN objects, directory
+        mappings and Ceph), merges them into the configured C(node) and
+        C(cluster) records and writes the result.
+      - >-
+        Fill mode (default) keeps every configured value and adds what is
+        missing; overwrite mode replaces discovered values but keeps annotations
+        the node cannot report. Lists of disks, pools, guests, nodes and SDN
+        objects merge element-wise on their identity key.
+      - >-
+        Needs the C(min), C(hardware) and C(network) fact subsets gathered by
+        the play. Read-only on the node; the only writes are the inventory
+        files on the controller. Safe under C(--check) (C(--diff) shows them).
+    options:
+      cluster_discover_inventory_dir:
+        type: str
+        required: false
+        default: "{{ inventory_dir }}"
+        description: "Inventory directory the records are read from and written to."
+      cluster_discover_group:
+        type: str
+        required: false
+        default: proxmox_cluster
+        description: "Inventory group whose group_vars/<group>/cluster.yml holds the cluster snapshot."
+      cluster_discover_write:
+        type: str
+        required: false
+        default: additional
+        choices: [additional, in_place]
+        description: "additional writes proposal files under <inventory_dir>/discovered/; in_place rewrites the records themselves."
+      cluster_discover_overwrite:
+        type: bool
+        required: false
+        default: false
+        description: "When true the live value replaces the configured one; when false the configured value wins and discovery only fills gaps."
+      cluster_discover_backup:
+        type: bool
+        required: false
+        default: false
+        description: "Keep a timestamped backup beside a file rewritten in place."
+      cluster_discover_strict:
+        type: bool
+        required: false
+        default: false
+        description: "Fail when the configuration disagrees with the live cluster."
+      cluster_discover_ceph:
+        type: bool
+        required: false
+        default: true
+        description: "Gather the Ceph side (admin keyring + python3-rados on the node); auto-skipped when ceph.conf is absent."
+      cluster_discover_delegate_to:
+        type: str
+        required: false
+        default: localhost
+        description: "The host holding the inventory checkout the records are written to."
+  render:
+    short_description: "Merge already-gathered facts into the configured records and write them (no gathering)."
+    description:
+      - >-
+        The write half on its own, for a caller (or a test) that supplies
+        C(cluster_discover_node_facts), C(cluster_discover_cluster_facts) and
+        C(cluster_discover_ceph_nodes) itself. Same options as C(main).
+    options:
+      cluster_discover_inventory_dir:
+        type: str
+        required: false
+        default: "{{ inventory_dir }}"
+        description: "Inventory directory the records are read from and written to."
+      cluster_discover_group:
+        type: str
+        required: false
+        default: proxmox_cluster
+        description: "Inventory group whose group_vars/<group>/cluster.yml holds the cluster snapshot."
+      cluster_discover_write:
+        type: str
+        required: false
+        default: additional
+        choices: [additional, in_place]
+        description: "additional writes proposal files under <inventory_dir>/discovered/; in_place rewrites the records themselves."
+      cluster_discover_overwrite:
+        type: bool
+        required: false
+        default: false
+        description: "When true the live value replaces the configured one."
+      cluster_discover_backup:
+        type: bool
+        required: false
+        default: false
+        description: "Keep a timestamped backup beside a file rewritten in place."
+      cluster_discover_strict:
+        type: bool
+        required: false
+        default: false
+        description: "Fail when the configuration disagrees with the live cluster."
+      cluster_discover_delegate_to:
+        type: str
+        required: false
+        default: localhost
+        description: "The host holding the inventory checkout the records are written to."

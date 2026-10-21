@@ -1,0 +1,99 @@
+---
+- name: "render | The gathered facts this stage merges must be present"
+  ansible.builtin.assert:
+    that:
+      - cluster_discover_node_facts is defined
+      - cluster_discover_cluster_facts is defined
+      - cluster_discover_write in ['additional', 'in_place']
+    fail_msg: >-
+      render needs cluster_discover_node_facts and cluster_discover_cluster_facts
+      (gathered by the role's main entry point, or supplied by the caller) and a
+      write mode of additional or in_place.
+    quiet: true
+
+- name: "render | Attach this node's Ceph roles to its record"
+  ansible.builtin.set_fact:
+    __cd_node_doc: >-
+      {{ cluster_discover_node_facts
+         | combine({'ceph': (cluster_discover_ceph_nodes | default({}))[inventory_hostname] | default(none)}) }}
+
+- name: "render | Merge the discovered node record into the configured one"
+  ansible.builtin.set_fact:
+    __cd_node_merged: >-
+      {{ (node | default({})) | get_sybers.cluster.config_merge(
+           __cd_node_doc, overwrite=cluster_discover_overwrite | bool, list_keys=cluster_discover_node_list_keys) }}
+    __cd_node_drift: >-
+      {{ (node | default({})) | get_sybers.cluster.config_drift(__cd_node_doc, list_keys=cluster_discover_node_list_keys) }}
+
+- name: "render | Merge the discovered cluster snapshot into the configured one"
+  ansible.builtin.set_fact:
+    __cd_cluster_merged: >-
+      {{ (cluster | default({})) | get_sybers.cluster.config_merge(
+           cluster_discover_cluster_facts, overwrite=cluster_discover_overwrite | bool, list_keys=cluster_discover_cluster_list_keys) }}
+    __cd_cluster_drift: >-
+      {{ (cluster | default({})) | get_sybers.cluster.config_drift(
+           cluster_discover_cluster_facts, list_keys=cluster_discover_cluster_list_keys) }}
+  run_once: true
+
+- name: "render | Resolve where the records are written"
+  ansible.builtin.set_fact:
+    __cd_node_dest: "{{ __cd_root }}/host_vars/{{ inventory_hostname }}/node.yml"
+    __cd_cluster_dest: "{{ __cd_root }}/group_vars/{{ cluster_discover_group }}/cluster.yml"
+  vars:
+    __cd_root: "{{ cluster_discover_inventory_dir }}{{ '/discovered' if cluster_discover_write == 'additional' else '' }}"
+
+- name: "render | Ensure the record directories exist"
+  ansible.builtin.file:
+    path: "{{ __cd_dest | dirname }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ __cd_node_dest }}"
+    - "{{ __cd_cluster_dest }}"
+  loop_control:
+    loop_var: __cd_dest
+    label: "{{ __cd_dest | dirname }}"
+  delegate_to: "{{ cluster_discover_delegate_to }}"
+
+- name: "render | Write this node's record"
+  ansible.builtin.template:
+    src: node.yml.j2
+    dest: "{{ __cd_node_dest }}"
+    mode: "0644"
+    backup: "{{ cluster_discover_backup | bool }}"
+  delegate_to: "{{ cluster_discover_delegate_to }}"
+
+- name: "render | Write the cluster snapshot"
+  ansible.builtin.template:
+    src: cluster.yml.j2
+    dest: "{{ __cd_cluster_dest }}"
+    mode: "0644"
+    backup: "{{ cluster_discover_backup | bool }}"
+  run_once: true
+  delegate_to: "{{ cluster_discover_delegate_to }}"
+
+- name: "render | Report what the live cluster says that the configuration does not"
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['======== ' ~ inventory_hostname ~ ': configuration vs live ========',
+          ('written: ' ~ __cd_node_dest ~ ' (' ~ ('live values replace configured ones' if cluster_discover_overwrite | bool
+                                                     else 'configured values kept, gaps filled') ~ ')')]
+         + (['no difference — the node record already matches the node'] if __cd_node_drift | length == 0
+            else [(__cd_node_drift | length | string) ~ ' difference(s):'] + (__cd_node_drift | map('to_json') | list))
+         + (['---- cluster snapshot: ' ~ __cd_cluster_dest]
+            + (['no difference — the snapshot already matches the cluster'] if __cd_cluster_drift | length == 0
+               else [(__cd_cluster_drift | length | string) ~ ' difference(s):'] + (__cd_cluster_drift | map('to_json') | list))
+            if inventory_hostname == ansible_play_hosts[0] else []) }}
+
+- name: "render | Enforce the drift gate when asked"
+  ansible.builtin.assert:
+    that:
+      - __cd_node_drift | length == 0
+      - __cd_cluster_drift | length == 0
+    fail_msg: >-
+      The configuration disagrees with the live cluster on {{ inventory_hostname }}:
+      {{ __cd_node_drift | length }} node difference(s), {{ __cd_cluster_drift | length }}
+      cluster difference(s). Adopt the written records (or re-run with
+      -e cluster_discover_write=in_place) before enforcing the gate again.
+    quiet: true
+  when: cluster_discover_strict | bool

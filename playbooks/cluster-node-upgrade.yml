@@ -1,0 +1,172 @@
+---
+- name: "Cluster preflight (once, on the master node)"
+  hosts: proxmox_master
+  gather_facts: false
+  run_once: true
+  tasks:
+    - name: "Read cluster status"
+      ansible.builtin.command: ceph -s --format json
+      register: __cnu_ceph
+      changed_when: false
+      check_mode: false
+    - name: "Parse cluster health + quorum"
+      ansible.builtin.set_fact:
+        __cnu_health: "{{ (__cnu_ceph.stdout | from_json).health.status }}"
+        __cnu_mons_all: "{{ (__cnu_ceph.stdout | from_json).monmap.num_mons }}"
+        __cnu_mons_quorum: "{{ (__cnu_ceph.stdout | from_json).quorum | length }}"
+    - name: "Cluster must be healthy and fully in quorum before ANY node is touched"
+      ansible.builtin.assert:
+        that:
+          - __cnu_health in ['HEALTH_OK', 'HEALTH_WARN']
+          - __cnu_mons_quorum | int == __cnu_mons_all | int
+        fail_msg: >-
+          Refusing to start: Ceph is {{ __cnu_health }} and MON quorum is
+          {{ __cnu_mons_quorum }}/{{ __cnu_mons_all }}. A node upgrade takes an
+          OSD/MON down transiently; starting from a degraded cluster risks data
+          availability. Resolve cluster health first.
+        success_msg: >-
+          Cluster {{ __cnu_health }}, MON quorum {{ __cnu_mons_quorum }}/{{ __cnu_mons_all }}
+          — safe to begin.
+        quiet: true
+- name: "Upgrade each remote node in place"
+  hosts: "proxmox_cluster:!proxmox_master"
+  gather_facts: true
+  serial: 1
+  order: reverse_sorted
+  tasks:
+    - name: "Upgrade this node (block so rescue always releases noout)"
+      block:
+        - name: "Running kernel and PVE/qemu versions before"
+          ansible.builtin.shell:
+            cmd: >-
+              set -o pipefail;
+              echo "kernel=$(uname -r)";
+              echo "qemu=$(dpkg-query -W -f='${Version}' qemu-server 2>/dev/null)";
+              echo "osd=$(ls -d /var/lib/ceph/osd/*/ 2>/dev/null | wc -l)"
+            executable: /bin/bash
+          register: __cnu_before
+          changed_when: false
+          check_mode: false
+        - name: "Structure the before-state"
+          ansible.builtin.set_fact:
+            __cnu_kernel_before: "{{ __cnu_before.stdout_lines | select('match', '^kernel=') | first | replace('kernel=', '') }}"
+            __cnu_qemu_before: "{{ __cnu_before.stdout_lines | select('match', '^qemu=') | first | replace('qemu=', '') }}"
+            __cnu_has_osd: "{{ (__cnu_before.stdout_lines | select('match', '^osd=') | first | replace('osd=', '') | int) > 0 }}"
+        - name: "Apt metadata is clean on this node"
+          ansible.builtin.apt:
+            update_cache: true
+          register: __cnu_apt_update
+        - name: "List apt holds"
+          ansible.builtin.command: apt-mark showhold
+          register: __cnu_holds
+          changed_when: false
+          check_mode: false
+        - name: "Fail on a hold that would leave a partial upgrade"
+          ansible.builtin.assert:
+            that: (__cnu_holds.stdout_lines | select('match', '(pve|qemu|proxmox-kernel|ceph)') | list | length) == 0
+            fail_msg: >-
+              Held packages match pve/qemu/kernel/ceph:
+              {{ __cnu_holds.stdout_lines }}. A full-upgrade would skip them and
+              leave this node partially upgraded. Resolve the holds first.
+            quiet: true
+        - name: "Set noout for the upgrade window (from the Ludus server)"
+          ansible.builtin.command: ceph osd set noout
+          delegate_to: "{{ cluster_master_node }}"
+          changed_when: true
+          when: not ansible_check_mode
+        - name: "Apt full-upgrade (same-major, trixie; pulls a new kernel)"
+          ansible.builtin.apt:
+            upgrade: full
+            update_cache: false
+          register: __cnu_upgrade
+        - name: "Newest installed kernel image"
+          ansible.builtin.shell:
+            cmd: "set -o pipefail; ls -1 /boot/vmlinuz-*-pve 2>/dev/null | sed 's#.*/vmlinuz-##' | sort -V | tail -1"
+            executable: /bin/bash
+          register: __cnu_kernel_after
+          changed_when: false
+          check_mode: false
+        - name: "A reboot is needed if the running kernel is not the newest installed"
+          ansible.builtin.set_fact:
+            __cnu_needs_reboot: "{{ (__cnu_kernel_after.stdout | trim) != __cnu_kernel_before }}"
+        - name: "Into the new kernel, then wait for the node to return"
+          ansible.builtin.reboot:
+            reboot_timeout: 900
+            post_reboot_delay: 30
+            test_command: "pveversion"
+          when:
+            - node_upgrade_reboot | bool
+            - __cnu_needs_reboot | bool
+            - not ansible_check_mode
+        - name: "Wait for this node's OSD to rejoin and cluster to be healthy"
+          ansible.builtin.command: ceph -s --format json
+          delegate_to: "{{ cluster_master_node }}"
+          register: __cnu_post
+          changed_when: false
+          check_mode: false
+          until:
+            - (__cnu_post.stdout | from_json).health.status in ['HEALTH_OK', 'HEALTH_WARN']
+            - (__cnu_post.stdout | from_json).osdmap.num_up_osds == (__cnu_post.stdout | from_json).osdmap.num_osds
+            - ((__cnu_post.stdout | from_json).quorum | length) == (__cnu_post.stdout | from_json).monmap.num_mons
+          retries: 30
+          delay: 20
+          when: not ansible_check_mode
+        - name: "Release noout now this node is back and healthy"
+          ansible.builtin.command: ceph osd unset noout
+          delegate_to: "{{ cluster_master_node }}"
+          changed_when: true
+          when: not ansible_check_mode
+        - name: "Read qemu-server after"
+          ansible.builtin.command: "dpkg-query -W -f='${Version}' qemu-server"
+          register: __cnu_qemu_after
+          changed_when: false
+          check_mode: false
+          when: not ansible_check_mode
+        - name: "Qemu-server advanced past the machine-type floor (>= 9.2)"
+          ansible.builtin.assert:
+            that: __cnu_qemu_after.stdout is version(node_upgrade_qemu_min_version, '>=')
+            fail_msg: >-
+              {{ inventory_hostname }} still reports qemu-server
+              {{ __cnu_qemu_after.stdout }} (< {{ node_upgrade_qemu_min_version }}). It cannot run the
+              pc-i440fx-11.0+pve2 machine type. The upgrade did not take —
+              investigate before the next node.
+            success_msg: >-
+              {{ inventory_hostname }}: qemu-server {{ __cnu_qemu_before }} ->
+              {{ __cnu_qemu_after.stdout }}; kernel reboot={{ __cnu_needs_reboot }}.
+            quiet: true
+          when: not ansible_check_mode
+      rescue:
+        - name: "Release noout so a mid-run failure does not leave it stuck"
+          ansible.builtin.command: ceph osd unset noout
+          delegate_to: "{{ cluster_master_node }}"
+          changed_when: true
+          failed_when: false
+        - name: "Stop the whole play — do not touch the next node"
+          ansible.builtin.fail:
+            msg: >-
+              Upgrade FAILED on {{ inventory_hostname }}. noout has been
+              released. serial:1 means no later node was touched. Inspect this
+              node (pveversion, ceph -s, journalctl -b) before re-running.
+- name: "Master node apt full-upgrade (opt-in; manual reboot after)"
+  hosts: proxmox_master
+  gather_facts: true
+  tasks:
+    - name: "Full-upgrade the Ludus server (no reboot here)"
+      when: node_upgrade_include_ludus_server | bool
+      block:
+        - name: "Apt full-upgrade"
+          ansible.builtin.apt:
+            upgrade: full
+            update_cache: true
+          register: __cnu_beef_upgrade
+        - name: "MANUAL REBOOT REQUIRED — this play will not self-reboot the controller"
+          ansible.builtin.debug:
+            msg: >-
+              {{ inventory_hostname }} has been apt full-upgraded. It runs the
+              Ansible controller, the Ludus server, the protected infra guests
+              and an OSD, so this play will NOT reboot it. Reboot it MANUALLY
+              at a chosen window: `ceph osd set noout` here, confirm every other
+              node's OSD+MON are healthy, `reboot`, then `ceph osd unset noout`
+              once `ceph -s` is healthy again. Until then
+              {{ inventory_hostname }} runs the old kernel; the new qemu/pve
+              userland is already active.

@@ -1,0 +1,48 @@
+---
+- name: "backend_file | Stat the secret file"
+  ansible.builtin.stat:
+    path: "{{ cluster_secrets_request.path }}"
+  register: __cluster_secrets_stat
+- name: "backend_file | Assert present + root-owned + tight mode"
+  ansible.builtin.assert:
+    that:
+      - __cluster_secrets_stat.stat.exists
+      - __cluster_secrets_stat.stat.pw_name == 'root'
+      - __cluster_secrets_stat.stat.mode in ['0400', '0600']
+    fail_msg: >-
+      Secret '{{ cluster_secrets_request.name }}' at
+      {{ cluster_secrets_request.path }} is missing or badly permissioned
+      (need root-owned, 0400/0600).
+    quiet: true
+  when: cluster_secrets_request.required | default(true)
+- name: "backend_file | Read the file"
+  ansible.builtin.slurp:
+    src: "{{ cluster_secrets_request.path }}"
+  register: __cluster_secrets_slurp
+  no_log: true
+  when: __cluster_secrets_stat.stat.exists
+- name: "backend_file | Extract + register the secret (no_log)"
+  ansible.builtin.set_fact:
+    cluster_secrets_result:
+      present: "{{ __cluster_secrets_stat.stat.exists | bool }}"
+      value: >-
+        {{ (__cluster_secrets_slurp.content | b64decode | regex_search(cluster_secrets_request.regex))
+           if (__cluster_secrets_stat.stat.exists and cluster_secrets_request.regex is defined)
+           else ((__cluster_secrets_slurp.content | b64decode | trim)
+                 if __cluster_secrets_stat.stat.exists else '') }}
+  no_log: true
+- name: "backend_file | Assert a non-empty secret was obtained"
+  ansible.builtin.assert:
+    that: cluster_secrets_result.value | default('') | length > 0
+    fail_msg: >-
+      Secret '{{ cluster_secrets_request.name }}' resolved empty
+      (file present={{ cluster_secrets_result.present }}, regex applied={{ cluster_secrets_request.regex is defined }})
+      — check the file contents / regex.
+    quiet: true
+  no_log: true
+  when: cluster_secrets_request.required | default(true)
+- name: "backend_file | Report SHAPE only (length, never any value bytes)"
+  ansible.builtin.debug:
+    msg: >-
+      Secret '{{ cluster_secrets_request.name }}' [file]: present={{ cluster_secrets_result.present }},
+      length={{ cluster_secrets_result.value | default('') | length }}.

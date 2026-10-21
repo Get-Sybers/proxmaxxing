@@ -1,0 +1,8 @@
+---
+- name: "Prove we run as root"
+  ansible.builtin.include_tasks: root.yml
+- name: "Prove this host is a PVE cluster node"
+  ansible.builtin.include_tasks: pve_node.yml
+- name: "Prove the environment API key is a live admin"
+  ansible.builtin.include_tasks: api_admin.yml
+  when: cluster_preflight_require_api_admin | bool

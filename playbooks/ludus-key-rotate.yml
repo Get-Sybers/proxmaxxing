@@ -1,0 +1,88 @@
+---
+- name: "Mint a new Ludus API key and home it in PocketBase"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: "Refuse --check"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: refuse_check
+    - name: "Cluster admission gate (root + PVE node)"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_preflight
+    - name: "Require an exported admin key (the minting identity)"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: require_caller_key
+    - name: "Prove the minting admin against the Ludus API (/whoami)"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: prove_caller
+    - name: "Read Ludus's database_encryption_key (to seal the new key)"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: dek_read
+    - name: "Authenticate to PocketBase as the superuser (store write only)"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_pb_store
+        tasks_from: auth_superuser
+    - name: "Fact-find the credentials collection"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_pb_store
+        tasks_from: collection_facts
+    - name: "Refuse unless the store is fit to trust (Phase A)"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: store_gate
+    - name: "Mint the target's new key with the caller's admin key (old key dies NOW)"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: key_mint
+      vars:
+        cluster_ludus_auth_mint_target: "{{ ludus_rotate_target }}"
+    - name: "Stage the minted key (crash-safety copy, 0400 root)"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: key_stage
+    - name: "Persist through the audited store round trip"
+      ansible.builtin.include_tasks: tasks/vault-migrate-one.yml
+      vars:
+        __vm_dek: "{{ __cla_dek }}"
+        item:
+          name: "{{ ludus_rotate_target }}.apikey"
+          path: "{{ cluster_ludus_auth_staging_file | default('/root/.ludus-key-rotate-staging') }}"
+          label: "sha256:{{ (ludus_rotate_target ~ '.apikey') | hash('sha256') | truncate(12, true, '') }}"
+    - name: "Adopt the minted key as the acting key"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: adopt_new_key
+    - name: "Prove the persisted key IS the target identity"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: whoami
+      vars:
+        cluster_ludus_auth_identity: "{{ ludus_rotate_target }}"
+    - name: "The rotated identity must still be a Ludus admin"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: require_admin
+    - name: "Refresh the sourceable env file with the NEW key"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: env_file_write
+      when: ludus_write_cli_config | bool
+    - name: "Remove the staging file (persisted and verified)"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: key_stage_remove
+    - name: "Report the rotation (shape only)"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: report_rotate
+      vars:
+        cluster_ludus_auth_mint_target: "{{ ludus_rotate_target }}"
+    - name: "Forget every secret fact"
+      ansible.builtin.include_role:
+        name: get_sybers.cluster.cluster_ludus_auth
+        tasks_from: forget

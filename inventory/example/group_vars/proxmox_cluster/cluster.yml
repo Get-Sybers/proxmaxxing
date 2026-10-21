@@ -1,0 +1,21 @@
+---
+# Cluster-wide As-Is record — playbooks/cluster-discover.yml fills it from the
+# live cluster (`-e cluster_discover_write=in_place`, or adopt the proposal it
+# writes under inventory/discovered/). This template carries only the key
+# structure: discovery adds the cluster name, config version and fingerprint,
+# the corosync nodes, the Ceph state (fsid, release, health, networks, mons,
+# OSDs, pools), the storages, users, groups, pools, roles, realms, SDN objects
+# and directory mappings. A fill run (the default) keeps every value already
+# here and adds what the cluster reports; an overwrite run
+# (-e cluster_discover_overwrite=true) replaces the discovered values and keeps
+# hand annotations. This is discovered state, not desired state: the plays
+# read it for orientation and cross-checks, never as a target to converge on.
+# Desired state lives in the sibling topic files.
+cluster:
+  nodes: []
+  ceph: {}
+  storage: []
+  pools: []
+  realms: []
+  sdn: {}
+  directory_mapping: []

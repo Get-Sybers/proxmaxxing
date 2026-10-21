@@ -1,0 +1,30 @@
+---
+- name: Converge (expect a controlled failure)
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: A non-PVE host must stop at the preflight node gate
+      block:
+        - name: Run cluster_preflight on a host that is not a PVE node
+          ansible.builtin.include_role:
+            name: get_sybers.cluster.cluster_preflight
+      rescue:
+        - name: The gate stopped because /etc/pve is absent
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result is defined
+              - "'not a Proxmox VE node' in (ansible_failed_result.msg | default(''))"
+            fail_msg: >-
+              failed, but not at the PVE-node gate:
+              {{ ansible_failed_result | default({}) }}
+            quiet: true
+        - name: Record the controlled failure
+          ansible.builtin.set_fact:
+            __cpf_failed_cleanly: true
+    - name: The failure path was taken
+      ansible.builtin.assert:
+        that:
+          - __cpf_failed_cleanly | default(false)
+        fail_msg: "cluster_preflight passed on a host that is not a PVE node"
+        quiet: true

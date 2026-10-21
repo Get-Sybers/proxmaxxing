@@ -1,0 +1,31 @@
+---
+- name: Converge (expect a controlled failure)
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: With no exported key, the caller-key gate must stop cleanly
+      block:
+        - name: Run the require_caller_key gate with no LUDUS_API_KEY
+          ansible.builtin.include_role:
+            name: get_sybers.cluster.cluster_ludus_auth
+            tasks_from: require_caller_key
+      rescue:
+        - name: The gate stopped because no admin key was exported
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result is defined
+              - "'No LUDUS_API_KEY exported' in (ansible_failed_result.msg | default(''))"
+            fail_msg: >-
+              failed, but not at the caller-key gate:
+              {{ ansible_failed_result | default({}) }}
+            quiet: true
+        - name: Record the controlled failure
+          ansible.builtin.set_fact:
+            __cla_failed_cleanly: true
+    - name: The failure path was taken
+      ansible.builtin.assert:
+        that:
+          - __cla_failed_cleanly | default(false)
+        fail_msg: "cluster_ludus_auth did not stop when no LUDUS_API_KEY was exported"
+        quiet: true

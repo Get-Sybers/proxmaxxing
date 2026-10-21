@@ -1,0 +1,74 @@
+---
+- name: "dek-sqlite-crosscheck | Is sqlite3 available?"
+  ansible.builtin.command:
+    argv: [which, sqlite3]
+  register: __dek_sqlite_which
+  changed_when: false
+  check_mode: false
+  failed_when: false
+- name: "dek-sqlite-crosscheck | Refuse without sqlite3, and name the alternative"
+  ansible.builtin.assert:
+    that: __dek_sqlite_which.rc == 0
+    fail_msg: >-
+      sqlite3 is not installed, so the independent cross-check of the
+      affected-user set cannot run. Install it (it is in Debian's `sqlite3`
+      package, available through the estate's Nexus apt proxy), or re-run with
+      -e dek_sqlite_crosscheck=false to proceed on the API enumeration alone —
+      accepting that the enumeration then has a single witness.
+    quiet: true
+- name: "dek-sqlite-crosscheck | Prove the expected columns still exist"
+  ansible.builtin.command:
+    argv:
+      - sqlite3
+      - -readonly
+      - "file:{{ ludus_db_path }}?mode=ro"
+      - "SELECT name FROM pragma_table_info('users') WHERE name IN ('userID','proxmoxPassword','proxmoxTokenSecret') ORDER BY name;"
+  register: __dek_sqlite_cols
+  changed_when: false
+  check_mode: false
+- name: "dek-sqlite-crosscheck | Refuse on a schema that no longer matches"
+  ansible.builtin.assert:
+    that: (__dek_sqlite_cols.stdout_lines | sort) == ['proxmoxPassword', 'proxmoxTokenSecret', 'userID']
+    fail_msg: >-
+      The users table does not carry the expected columns — found
+      {{ __dek_sqlite_cols.stdout_lines | sort }}. Ludus has changed its schema;
+      re-read migrations/1761252002_initial_expand_users_collection.go for the
+      current field set before rotating anything. Nothing has been modified.
+    quiet: true
+- name: "dek-sqlite-crosscheck | Count the non-empty encrypted fields (LENGTHS ONLY)"
+  ansible.builtin.command:
+    argv:
+      - sqlite3
+      - -readonly
+      - "file:{{ ludus_db_path }}?mode=ro"
+      - >-
+        SELECT userID || '|' ||
+               CASE WHEN length(coalesce(proxmoxPassword,'')) > 0 THEN 1 ELSE 0 END || '|' ||
+               CASE WHEN length(coalesce(proxmoxTokenSecret,'')) > 0 THEN 1 ELSE 0 END
+        FROM users ORDER BY userID;
+  register: __dek_sqlite_rows
+  changed_when: false
+  check_mode: false
+- name: "dek-sqlite-crosscheck | Derive the field count this witness sees"
+  ansible.builtin.set_fact:
+    __dek_sqlite_field_count: >-
+      {%- set n = [] -%}
+      {%- for row in __dek_sqlite_rows.stdout_lines -%}
+      {%-   set parts = row.split('|') -%}
+      {%-   set _ = n.append(parts[1] | int + parts[2] | int) -%}
+      {%- endfor -%}
+      {{ n | sum }}
+- name: "dek-sqlite-crosscheck | The two witnesses must agree"
+  ansible.builtin.assert:
+    that: (__dek_sqlite_field_count | int) == (__dek_targets | length)
+    fail_msg: >-
+      ENUMERATION DISAGREEMENT: the PocketBase superuser listing found
+      {{ __dek_targets | length }} encrypted field(s); a read-only query against
+      {{ ludus_db_path }} found {{ __dek_sqlite_field_count }}. One of them is
+      wrong, and rotating on the smaller set would leave the difference
+      encrypted under a dead key. Nothing has been modified — resolve the
+      discrepancy first.
+    success_msg: >-
+      Both witnesses agree: {{ __dek_targets | length }} encrypted field(s)
+      across {{ __dek_sqlite_rows.stdout_lines | length }} user record(s).
+    quiet: true

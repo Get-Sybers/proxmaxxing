@@ -1,0 +1,289 @@
+---
+# Cluster-wide reads run once (on the first node of the batch); set_fact under
+# run_once publishes the result to every host, so render.yml sees it everywhere.
+- name: "gather_cluster | Read the cluster status"
+  ansible.builtin.command:
+    argv: [pvesh, get, /cluster/status, --output-format, json]
+  register: __cd_status
+  run_once: true
+  changed_when: false
+  check_mode: false
+
+- name: "gather_cluster | Read the corosync node table"
+  ansible.builtin.command:
+    argv: [pvesh, get, /cluster/config/nodes, --output-format, json]
+  register: __cd_cfg_nodes
+  run_once: true
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: "gather_cluster | Read the join information (node certificate fingerprints)"
+  ansible.builtin.command:
+    argv: [pvesh, get, /cluster/config/join, --output-format, json]
+  register: __cd_join
+  run_once: true
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: "gather_cluster | Read the storage, access and pool tables"
+  ansible.builtin.command:
+    argv: [pvesh, get, "{{ __cd_path }}", --output-format, json]
+  loop:
+    - /storage
+    - /access/users
+    - /access/groups
+    - /access/roles
+    - /access/domains
+    - /pools
+    - /cluster/mapping/dir
+  loop_control:
+    loop_var: __cd_path
+  register: __cd_tables
+  run_once: true
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: "gather_cluster | Index the tables by path"
+  ansible.builtin.set_fact:
+    __cd_table: >-
+      {{ dict(__cd_tables.results | map(attribute='__cd_path')
+              | zip(__cd_tables.results | map(attribute='stdout') | map('default', '[]', true)
+                    | map('from_json'))) }}
+  run_once: true
+
+- name: "gather_cluster | Read each pool's members"
+  ansible.builtin.command:
+    argv: [pvesh, get, "/pools/{{ __cd_pool.poolid }}", --output-format, json]
+  loop: "{{ __cd_table['/pools'] | default([]) }}"
+  loop_control:
+    loop_var: __cd_pool
+    label: "{{ __cd_pool.poolid }}"
+  register: __cd_pool_reads
+  run_once: true
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: "gather_cluster | Read the SDN object tables"
+  ansible.builtin.command:
+    argv: [pvesh, get, "/cluster/sdn/{{ __cd_kind }}", --output-format, json]
+  loop: [zones, vnets, controllers, ipams, fabrics]
+  loop_control:
+    loop_var: __cd_kind
+  register: __cd_sdn_reads
+  run_once: true
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: "gather_cluster | Index the SDN tables by kind"
+  ansible.builtin.set_fact:
+    __cd_sdn: >-
+      {{ dict(__cd_sdn_reads.results | map(attribute='__cd_kind')
+              | zip(__cd_sdn_reads.results | map(attribute='stdout') | map('default', '[]', true)
+                    | map('from_json'))) }}
+  run_once: true
+
+- name: "gather_cluster | Read each VNet's subnets"
+  ansible.builtin.command:
+    argv: [pvesh, get, "/cluster/sdn/vnets/{{ __cd_vnet.vnet }}/subnets", --output-format, json]
+  loop: "{{ __cd_sdn.vnets | default([]) }}"
+  loop_control:
+    loop_var: __cd_vnet
+    label: "{{ __cd_vnet.vnet }}"
+  register: __cd_subnet_reads
+  run_once: true
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: "gather_cluster | Does this cluster run Ceph?"
+  ansible.builtin.stat:
+    path: /etc/ceph/ceph.conf
+  register: __cd_ceph_conf
+  run_once: true
+  check_mode: false
+
+- name: "gather_cluster | Read the Ceph maps (read-only, over librados)"
+  get_sybers.cluster.ceph_info:
+    queries: [status, mon_dump, osd_tree, osd_pool_ls_detail, config_dump, versions]
+  register: __cd_ceph
+  run_once: true
+  when:
+    - cluster_discover_ceph | bool
+    - __cd_ceph_conf.stat.exists
+
+- name: "gather_cluster | Read mon_host from ceph.conf"
+  ansible.builtin.slurp:
+    src: /etc/ceph/ceph.conf
+  register: __cd_ceph_conf_raw
+  run_once: true
+  when:
+    - cluster_discover_ceph | bool
+    - __cd_ceph_conf.stat.exists
+
+- name: "gather_cluster | Shape each storage record"
+  ansible.builtin.set_fact:
+    __cd_storage: >-
+      {{ __cd_storage | default([]) + [{
+           'id': __cd_st.storage,
+           'type': __cd_st.type,
+           'content': __cd_st.content | default(none),
+           'path': __cd_st.path | default(__cd_st.pool | default(__cd_st.export | default(none))),
+           'shared': (__cd_st.shared | default(0) | int) == 1,
+           'enabled': (__cd_st.disable | default(0) | int) == 0,
+           'nodes': __cd_st.nodes | default(none) }] }}
+  loop: "{{ __cd_table['/storage'] | default([]) | sort(attribute='storage') }}"
+  loop_control:
+    loop_var: __cd_st
+    label: "{{ __cd_st.storage }}"
+  run_once: true
+
+- name: "gather_cluster | Shape each corosync node record"
+  ansible.builtin.set_fact:
+    __cd_nodes: >-
+      {{ __cd_nodes | default([]) + [{
+           'name': __cd_cn.name,
+           'id': __cd_cn.nodeid | default(none),
+           'votes': __cd_cn.quorum_votes | default(none),
+           'ip': __cd_cn.ring0_addr | default(none) }] }}
+  loop: "{{ ((__cd_cfg_nodes.stdout | from_json) if __cd_cfg_nodes.rc == 0 else []) | sort(attribute='nodeid') }}"
+  loop_control:
+    loop_var: __cd_cn
+    label: "{{ __cd_cn.name }}"
+  run_once: true
+
+- name: "gather_cluster | Shape each pool record"
+  ansible.builtin.set_fact:
+    __cd_pools: >-
+      {{ __cd_pools | default([]) + [{
+           'id': __cd_pr.__cd_pool.poolid,
+           'comment': __cd_pr.__cd_pool.comment | default(none),
+           'members': ((__cd_pr.stdout | from_json).members | default([]) if __cd_pr.rc == 0 else [])
+                      | selectattr('vmid', 'defined') | map(attribute='vmid') | sort }] }}
+  loop: "{{ __cd_pool_reads.results | default([]) }}"
+  loop_control:
+    loop_var: __cd_pr
+    label: "{{ __cd_pr.__cd_pool.poolid }}"
+  run_once: true
+
+- name: "gather_cluster | Shape each Ceph mon record"
+  ansible.builtin.set_fact:
+    __cd_mons: >-
+      {{ __cd_mons | default([]) + [{
+           'name': __cd_mon.name,
+           'addr': ((__cd_mon.public_addrs.addrvec | default([]) | map(attribute='addr') | list)[0]
+                    | default(__cd_mon.public_addr | default(''))) | regex_replace(':[0-9]+(/[0-9]+)?$', '') }] }}
+  loop: "{{ __cd_ceph.ceph.mon_dump.mons | default([]) | sort(attribute='name') }}"
+  loop_control:
+    loop_var: __cd_mon
+    label: "{{ __cd_mon.name }}"
+  run_once: true
+  when: __cd_ceph.ceph is defined
+
+- name: "gather_cluster | Shape each Ceph pool record"
+  ansible.builtin.set_fact:
+    __cd_ceph_pools: >-
+      {{ __cd_ceph_pools | default([]) + [{
+           'name': __cd_cp.pool_name,
+           'size': __cd_cp.size,
+           'min_size': __cd_cp.min_size,
+           'pg_num': __cd_cp.pg_num }] }}
+  loop: "{{ __cd_ceph.ceph.osd_pool_ls_detail | default([]) | sort(attribute='pool_name') }}"
+  loop_control:
+    loop_var: __cd_cp
+    label: "{{ __cd_cp.pool_name }}"
+  run_once: true
+  when: __cd_ceph.ceph is defined
+
+- name: "gather_cluster | Derive each node's Ceph roles"
+  ansible.builtin.set_fact:
+    cluster_discover_ceph_nodes: >-
+      {{ cluster_discover_ceph_nodes | default({}) | combine({__cd_node: {
+           'roles': (['mon'] if __cd_node in (__cd_mons | default([]) | map(attribute='name') | list) else [])
+                    + (['mgr-active'] if __cd_mgr.active_name | default('') == __cd_node else [])
+                    + (['mgr-standby'] if __cd_node in (__cd_mgr.standbys | default([]) | map(attribute='name') | list) else [])
+                    + (['osd'] if __cd_osd_ids | length > 0 else []),
+           'mon_addr': ((__cd_mons | default([]) | selectattr('name', 'eq', __cd_node) | map(attribute='addr') | list)[0] | default(none)),
+           'osds': __cd_osd_ids | map('regex_replace', '^', 'osd.') | list } }) }}
+  vars:
+    __cd_mgr: "{{ __cd_ceph.ceph.status.mgrmap | default({}) }}"
+    __cd_osd_ids: >-
+      {{ (__cd_ceph.ceph.osd_tree.nodes | default([]) | selectattr('type', 'eq', 'host')
+          | selectattr('name', 'eq', __cd_node) | map(attribute='children') | flatten | sort) }}
+  loop: "{{ ansible_play_hosts }}"
+  loop_control:
+    loop_var: __cd_node
+  run_once: true
+  when: __cd_ceph.ceph is defined
+
+- name: "gather_cluster | Assemble the cluster snapshot"
+  ansible.builtin.set_fact:
+    cluster_discover_cluster_facts:
+      name: "{{ __cd_cl.name | default(none) }}"
+      config_version: "{{ __cd_cl.version | default(none) }}"
+      quorate: "{{ ((__cd_cl.quorate | default(0) | int) == 1) if __cd_cl.quorate is defined else none }}"
+      fingerprint: >-
+        {{ (((__cd_join.stdout | from_json).nodelist | default([]) if __cd_join.rc == 0 else [])
+            | selectattr('name', 'eq', ansible_facts['hostname']) | map(attribute='pve_fp') | list)[0] | default(none) }}
+      nodes: "{{ __cd_nodes | default([]) }}"
+      ceph: "{{ __cd_ceph_doc if __cd_ceph.ceph is defined else none }}"
+      storage: "{{ __cd_storage | default([]) }}"
+      users: "{{ __cd_table['/access/users'] | default([]) | map(attribute='userid') | sort }}"
+      groups: "{{ __cd_table['/access/groups'] | default([]) | map(attribute='groupid') | sort }}"
+      pools: "{{ __cd_pools | default([]) | sort(attribute='id') }}"
+      roles: "{{ __cd_table['/access/roles'] | default([]) | map(attribute='roleid') | sort }}"
+      realms: >-
+        {{ __cd_table['/access/domains'] | default([]) | sort(attribute='realm')
+           | map('dict2items') | map('selectattr', 'key', 'in', ['realm', 'type', 'comment']) | map('items2dict') | list }}
+      sdn:
+        zones: >-
+          {{ __cd_sdn.zones | default([]) | sort(attribute='zone') | map('dict2items')
+             | map('selectattr', 'key', 'in', cluster_discover_sdn_keys.zones) | map('items2dict') | list }}
+        vnets: >-
+          {{ __cd_sdn.vnets | default([]) | sort(attribute='vnet') | map('dict2items')
+             | map('selectattr', 'key', 'in', cluster_discover_sdn_keys.vnets) | map('items2dict') | list }}
+        subnets: >-
+          {{ __cd_subnet_reads.results | default([]) | selectattr('rc', 'eq', 0)
+             | map(attribute='stdout') | map('from_json') | flatten | sort(attribute='subnet') | map('dict2items')
+             | map('selectattr', 'key', 'in', cluster_discover_sdn_keys.subnets) | map('items2dict') | list }}
+        controllers: >-
+          {{ __cd_sdn.controllers | default([]) | sort(attribute='controller') | map('dict2items')
+             | map('selectattr', 'key', 'in', cluster_discover_sdn_keys.controllers) | map('items2dict') | list }}
+        ipams: >-
+          {{ __cd_sdn.ipams | default([]) | sort(attribute='ipam') | map('dict2items')
+             | map('selectattr', 'key', 'in', cluster_discover_sdn_keys.ipams) | map('items2dict') | list }}
+        fabrics: >-
+          {{ __cd_sdn.fabrics | default([]) | sort(attribute='id') | map('dict2items')
+             | map('selectattr', 'key', 'in', cluster_discover_sdn_keys.fabrics) | map('items2dict') | list }}
+      directory_mapping: >-
+        {{ __cd_table['/cluster/mapping/dir'] | default([]) | sort(attribute='id')
+           | map('dict2items') | map('selectattr', 'key', 'in', ['id', 'map', 'description']) | map('items2dict') | list }}
+  vars:
+    __cd_cl: >-
+      {{ (((__cd_status.stdout | from_json) | selectattr('type', 'eq', 'cluster') | list)[0]) | default({}) }}
+    __cd_conf: >-
+      {{ dict(__cd_ceph.ceph.config_dump | default([]) | selectattr('section', 'eq', 'global') | map(attribute='name')
+              | zip(__cd_ceph.ceph.config_dump | default([]) | selectattr('section', 'eq', 'global') | map(attribute='value'))) }}
+    __cd_versions: "{{ (__cd_ceph.ceph.versions.overall | default({}) | list)[0] | default('') }}"
+    __cd_ceph_doc:
+      fsid: "{{ __cd_ceph.fsid | default(none) }}"
+      release: "{{ (__cd_versions | regex_search('\\) ([a-z]+) \\(', '\\1') | default([none], true))[0] }}"
+      version: "{{ (__cd_versions | regex_search('ceph version ([0-9.]+)', '\\1') | default([none], true))[0] }}"
+      health: "{{ __cd_ceph.ceph.status.health.status | default(none) }}"
+      public_network: "{{ __cd_conf.public_network | default(none) }}"
+      cluster_network: "{{ __cd_conf.cluster_network | default(none) }}"
+      mon_host: >-
+        {{ (__cd_ceph_conf_raw.content | default('') | b64decode | regex_search('(?m)^\\s*mon_host\\s*=\\s*(.+?)\\s*$', '\\1') | default([none], true))[0] }}
+      osd_pool_default_size: "{{ __cd_conf.osd_pool_default_size | default(none) }}"
+      osd_pool_default_min_size: "{{ __cd_conf.osd_pool_default_min_size | default(none) }}"
+      mons: "{{ __cd_mons | default([]) }}"
+      osds:
+        total: "{{ __cd_ceph.ceph.status.osdmap.num_osds | default(none) }}"
+        up: "{{ __cd_ceph.ceph.status.osdmap.num_up_osds | default(none) }}"
+        in: "{{ __cd_ceph.ceph.status.osdmap.num_in_osds | default(none) }}"
+      pools: "{{ __cd_ceph_pools | default([]) }}"
+  run_once: true

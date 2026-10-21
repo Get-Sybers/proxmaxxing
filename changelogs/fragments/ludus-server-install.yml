@@ -1,0 +1,23 @@
+---
+added:
+  - >-
+    Ludus server install/reconcile. New role ``cluster_ludus_install`` and play
+    ``ludus-server-install`` stand up a Ludus server on a Proxmox cluster node and
+    then idempotently reconcile the SAFE keys of ``/opt/ludus/config.yml`` for this
+    cluster (shared Ceph ``raw`` storage, ``cluster_mode``, the VXLAN ``sdn_zone``,
+    and the ``reserved_range_numbers`` that keep ranges off the Ceph/mesh
+    network, the cluster's storage /16). ``database_encryption_key`` is captured before any edit and
+    asserted unchanged after — it is never rewritten; the host network keys are
+    reconciled only on explicit ``cluster_ludus_install_manage_network`` opt-in. The
+    ROOT API key is staged into the house credential store, services are restarted
+    via a single flushed handler, and the result is verified on disk. On a host with
+    no install the role refuses unless ``cluster_ludus_install_run_installer=true``,
+    in which case it downloads and runs ``ludus-server --no-prompt`` (no reboot on an
+    existing Proxmox host). A second run is ``changed=0``.
+  - >-
+    New play ``cluster-sdn-zone`` idempotently ensures the VXLAN SDN zone
+    (``ludus``) that ``cluster-sdn-setup`` assumes already exists: it creates and
+    applies the zone when absent, refuses an existing zone of the wrong type, and
+    verifies the zone is VXLAN on disk. New ``ludus_install_negative`` Molecule
+    scenario (no install present, installer disabled) must stop at the role's
+    labelled install guard.

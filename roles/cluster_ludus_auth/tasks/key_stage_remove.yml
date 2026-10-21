@@ -1,0 +1,5 @@
+---
+- name: "key_stage_remove | Remove the staging file (persisted and verified)"
+  ansible.builtin.file:
+    path: "{{ cluster_ludus_auth_staging_file }}"
+    state: absent

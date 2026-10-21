@@ -1,0 +1,42 @@
+---
+- name: "collection_facts | Probe the credentials collection"
+  ansible.builtin.uri:
+    url: "{{ cluster_pb_store_base_url }}/api/collections/{{ cluster_pb_store_collection_name }}"
+    method: GET
+    headers:
+      Authorization: "{{ __pb_super_token }}"
+    validate_certs: "{{ cluster_pb_store_validate_certs }}"
+    status_code: [200, 404]
+  register: __pb_col_probe
+  no_log: true
+  check_mode: false
+  changed_when: false
+- name: "collection_facts | Fetch the users collection (relation target id)"
+  ansible.builtin.uri:
+    url: "{{ cluster_pb_store_base_url }}/api/collections/users"
+    method: GET
+    headers:
+      Authorization: "{{ __pb_super_token }}"
+    validate_certs: "{{ cluster_pb_store_validate_certs }}"
+    status_code: [200]
+  register: __pb_users_col
+  no_log: true
+  check_mode: false
+  changed_when: false
+- name: "collection_facts | Derive NON-SECRET shape facts"
+  ansible.builtin.set_fact:
+    __pb_collection_present: "{{ __pb_col_probe.status == 200 }}"
+    __pb_users_collection_id: "{{ __pb_users_col.json.id }}"
+    __pb_collection_rules_match: >-
+      {{ __pb_col_probe.status == 200
+         and __pb_col_probe.json.listRule   == cluster_pb_store_collection_rules.listRule
+         and __pb_col_probe.json.viewRule   == cluster_pb_store_collection_rules.viewRule
+         and __pb_col_probe.json.createRule == cluster_pb_store_collection_rules.createRule
+         and __pb_col_probe.json.updateRule == cluster_pb_store_collection_rules.updateRule
+         and __pb_col_probe.json.deleteRule == cluster_pb_store_collection_rules.deleteRule }}
+- name: "collection_facts | Report the collection state"
+  ansible.builtin.debug:
+    msg: >-
+      Collection '{{ cluster_pb_store_collection_name }}':
+      present={{ __pb_collection_present }},
+      rules_match={{ __pb_collection_rules_match }}.

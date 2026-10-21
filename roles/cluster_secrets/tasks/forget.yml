@@ -1,0 +1,5 @@
+---
+- name: "forget | Forget the in-memory secret"
+  ansible.builtin.set_fact:
+    cluster_secrets_result: {}
+  no_log: true

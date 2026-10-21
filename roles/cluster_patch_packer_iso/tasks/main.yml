@@ -1,0 +1,100 @@
+---
+- name: "Preflight — the manifest exists"
+  ansible.builtin.stat:
+    path: "{{ cluster_patch_packer_iso_manifest }}"
+  register: __pi_manifest_stat
+  check_mode: false
+- name: "Refuse without a manifest"
+  ansible.builtin.assert:
+    that: __pi_manifest_stat.stat.exists
+    fail_msg: >-
+      {{ cluster_patch_packer_iso_manifest }} not found. This role NEVER guesses an ISO name —
+      without the manifest there is nothing to prove we hold the file, and a
+      wrong iso_file is a build that fails late instead of downloading.
+      The manifest ships with this collection as meta/iso-inventory.yml, so either
+      update/reinstall the collection, or point cluster_patch_packer_iso_manifest at where it lives.
+    quiet: true
+- name: "Load the manifest"
+  ansible.builtin.include_vars:
+    file: "{{ cluster_patch_packer_iso_manifest }}"
+    name: _pi_manifest
+- name: "Read the build node from config.yml"
+  ansible.builtin.slurp:
+    src: "{{ cluster_patch_packer_iso_config_path }}"
+  register: __pi_cfg
+  check_mode: false
+- name: "Derive the build node"
+  ansible.builtin.set_fact:
+    __pi_build_node: >-
+      {{ (__pi_cfg.content | b64decode | from_yaml).proxmox_node
+         | default((__pi_cfg.content | b64decode | from_yaml).proxmox_hostname, true) }}
+- name: "Assert we identified a build node"
+  ansible.builtin.assert:
+    that: __pi_build_node | length > 0
+    fail_msg: >-
+      Could not read proxmox_node/proxmox_hostname from {{ cluster_patch_packer_iso_config_path }}.
+      Refusing to guess which node builds run on — an ISO on the wrong node cannot
+      serve a build.
+    quiet: true
+- name: "Make held ISOs discoverable under the name Proxmox expects"
+  ansible.builtin.script:
+    cmd: >-
+      link-registered-isos.py
+      --registry {{ cluster_patch_packer_iso_manifest }}
+      --iso-dir {{ cluster_patch_packer_iso_iso_dir }}
+      {{ '--apply' if cluster_patch_packer_iso_apply | bool else '' }}
+    executable: python3
+  register: __pi_link
+  changed_when: "'linked ' in (__pi_link.stdout | default(''))"
+- name: "Report what the linker did"
+  ansible.builtin.debug:
+    msg: "{{ (__pi_link.stdout_lines | default([])) | select('search', '^ISO links') | list }}"
+- name: "Index usable ISOs by checksum"
+  ansible.builtin.set_fact:
+    __pi_usable: >-
+      {{ dict(
+           (_pi_manifest.iso_inventory | default([]))
+           | selectattr('iso_file', 'string')
+           | selectattr('nodes', 'contains', __pi_build_node)
+           | map(attribute='iso_checksum') | list
+           |
+           zip(
+             (_pi_manifest.iso_inventory | default([]))
+             | selectattr('iso_file', 'string')
+             | selectattr('nodes', 'contains', __pi_build_node)
+             | map(attribute='iso_file') | list
+           )
+         ) }}
+- name: "Negative control — a checksum that cannot exist is not usable"
+  ansible.builtin.assert:
+    that: "'sha256:' ~ ('0' * 64) not in __pi_usable"
+    fail_msg: >-
+      The usable-ISO index matched a checksum that cannot exist, so it is not a
+      real index — every patch decision below would be meaningless. Fix the
+      manifest parse before applying anything.
+    quiet: true
+- name: "Find every packer template in both trees"
+  ansible.builtin.find:
+    paths: "{{ cluster_patch_packer_iso_search_paths }}"
+    patterns: "*.pkr.hcl"
+    recurse: true
+  register: __pi_files
+  check_mode: false
+- name: "Assess each template"
+  ansible.builtin.include_tasks: patch_one.yml
+  loop: "{{ __pi_files.files | map(attribute='path') | sort }}"
+  loop_control:
+    loop_var: pi_path
+    label: "{{ pi_path | regex_replace('^/opt/ludus/', '') }}"
+- name: "Report"
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['======== packer ISO redirect ========',
+          'mode        : ' ~ ('APPLY' if cluster_patch_packer_iso_apply | bool else 'REPORT ONLY — nothing written'),
+          'build node  : ' ~ __pi_build_node,
+          'usable ISOs : ' ~ (__pi_usable | length),
+          'templates   : ' ~ (__pi_files.files | length),
+          'redirected  : ' ~ (__pi_results | default([]) | selectattr('action', 'equalto', 'redirect') | list | length),
+          'already done: ' ~ (__pi_results | default([]) | selectattr('action', 'equalto', 'already') | list | length),
+          'left alone  : ' ~ (__pi_results | default([]) | selectattr('action', 'equalto', 'skip') | list | length),
+          ''] + (__pi_results | default([]) | map('to_json') | list) }}
