@@ -216,8 +216,8 @@
       ansible.builtin.set_fact:
         __tuning_mismatch: >-
           {{ __tuning_mismatch | default([]) +
-             ([item.key ~ '=' ~ (__config[item.key]) ~ ' (expected ' ~ item['value'] ~ ')']
-              if (item['key'] in __config and (__config[item.key] | string) != (item['value'] | string))
+             ([item['key'] ~ '=' ~ (__config[item['key']]) ~ ' (expected ' ~ item['value'] ~ ')']
+              if (item['key'] in __config and (__config[item['key']] | string) != (item['value'] | string))
               else []) }}
       loop: "{{ ceph_expected_config | dict2items }}"
       loop_control:

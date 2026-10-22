@@ -115,9 +115,9 @@
           {{ inventory_hostname }} — state captured BEFORE any change:
           links (only the ones THIS RUN brings up are ever torn down again):
           {% for l in __links %}
-            {{ l['iface'] }}: addr {{ __prior_links[l.iface].addr }}, mtu {{ __prior_links[l.iface].mtu }},
-                           operstate {{ __prior_links[l.iface].operstate }}  -> target {{ l['address'] }} mtu {{ l['mtu'] }}
-                           ({{ 'ALREADY at target — rescue will NOT touch it' if __prior_links[l.iface].addr == l['address']
+            {{ l['iface'] }}: addr {{ __prior_links[l['iface']].addr }}, mtu {{ __prior_links[l['iface']].mtu }},
+                           operstate {{ __prior_links[l['iface']].operstate }}  -> target {{ l['address'] }} mtu {{ l['mtu'] }}
+                           ({{ 'ALREADY at target — rescue will NOT touch it' if __prior_links[l['iface']].addr == l['address']
                                else 'this run will bring it up; rescue can tear it back down' }})
           {% endfor %}
           offload features (restored per feature):
@@ -333,20 +333,20 @@
             cmd: |
               set -o pipefail
               ip addr del {{ item['address'] }} dev {{ item['iface'] }} 2>/dev/null || true
-              {% if __prior_links[item.iface].addr not in ['none', ''] %}
-              ip addr add {{ __prior_links[item.iface].addr }} dev {{ item['iface'] }} 2>/dev/null || true
+              {% if __prior_links[item['iface']].addr not in ['none', ''] %}
+              ip addr add {{ __prior_links[item['iface']].addr }} dev {{ item['iface'] }} 2>/dev/null || true
               {% endif %}
-              {% if __prior_links[item.iface].mtu not in ['none', ''] %}
-              ip link set dev {{ item['iface'] }} mtu {{ __prior_links[item.iface].mtu }} 2>/dev/null || true
+              {% if __prior_links[item['iface']].mtu not in ['none', ''] %}
+              ip link set dev {{ item['iface'] }} mtu {{ __prior_links[item['iface']].mtu }} 2>/dev/null || true
               {% endif %}
-              {% if __prior_links[item.iface].operstate in ['down'] %}
+              {% if __prior_links[item['iface']].operstate in ['down'] %}
               ip link set dev {{ item['iface'] }} down 2>/dev/null || true
               {% endif %}
               echo restored
             executable: /bin/bash
           loop: "{{ __links }}"
-          loop_control: { label: "{{ item['iface'] }} <- {{ __prior_links[item.iface].addr }} mtu {{ __prior_links[item.iface].mtu }}" }
-          when: __prior_links[item.iface].addr != item['address']
+          loop_control: { label: "{{ item['iface'] }} <- {{ __prior_links[item['iface']].addr }} mtu {{ __prior_links[item['iface']].mtu }}" }
+          when: __prior_links[item['iface']].addr != item['address']
           register: __sn_restore_links
           changed_when: true
           failed_when: false
@@ -390,12 +390,12 @@
             __sn_link_verdicts: >-
               {{ __sn_link_verdicts | default([]) + [{
                    'iface': item["item"]["iface"],
-                   'was': __prior_links[item.item.iface].addr ~ ' mtu ' ~ __prior_links[item.item.iface].mtu,
+                   'was': __prior_links[item["item"]["iface"]].addr ~ ' mtu ' ~ __prior_links[item["item"]["iface"]].mtu,
                    'now': (item["stdout"] | default('?|?|?')).split('|')[0] ~ ' mtu ' ~ (item["stdout"] | default('?|?|?')).split('|')[1],
-                   'touched': __prior_links[item.item.iface].addr != item["item"]["address"]
-                              or __prior_links[item.item.iface].mtu | string != item['item']['mtu'] | string,
-                   'ok': (item["stdout"] | default('')).split('|')[0] == __prior_links[item.item.iface].addr
-                         and (item['stdout'] | default('|')).split('|')[1] == __prior_links[item.item.iface].mtu | string }] }}
+                   'touched': __prior_links[item["item"]["iface"]].addr != item["item"]["address"]
+                              or __prior_links[item['item']['iface']].mtu | string != item['item']['mtu'] | string,
+                   'ok': (item["stdout"] | default('')).split('|')[0] == __prior_links[item["item"]["iface"]].addr
+                         and (item['stdout'] | default('|')).split('|')[1] == __prior_links[item['item']['iface']].mtu | string }] }}
           loop: "{{ __sn_link_after.results }}"
           loop_control: { label: "{{ item['item']['iface'] }}" }
         - name: "Rescue verify: the rollback verdict"

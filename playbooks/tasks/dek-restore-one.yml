@@ -36,7 +36,7 @@
   args:
     stdin: >-
       {{ {'op': 'decrypt', 'key': __dek_new_key,
-          'data': __pb_record_read_record[item.field]} | to_json }}
+          'data': __pb_record_read_record[item["field"]]} | to_json }}
     stdin_add_newline: false
   register: __dek_readback
   no_log: true

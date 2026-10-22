@@ -96,7 +96,7 @@
             argv: [ceph, config, set, "{{ item['section'] }}", "{{ item['name'] }}", "{{ item['value'] }}"]
           loop: "{{ ceph_osd_tuning }}"
           loop_control: { label: "{{ item['section'] }}/{{ item['name'] }} = {{ item['value'] }} ({{ item['why'] }})" }
-          changed_when: __prior_config[item.section ~ '/' ~ item['name']] | default('') != item['value']
+          changed_when: __prior_config[item['section'] ~ '/' ~ item['name']] | default('') != item['value']
         - name: "Force every pool to a placeable replica count"
           ansible.builtin.command:
             argv: [ceph, osd, pool, set, "{{ item }}", size, "{{ ceph_pool_size }}"]
@@ -169,10 +169,10 @@
         - name: "Rescue: restore config keys that HAD a prior value"
           ansible.builtin.command:
             argv: [ceph, config, set, "{{ item['section'] }}", "{{ item['name'] }}",
-                   "{{ __prior_config[item.section ~ '/' ~ item['name']] }}"]
+                   "{{ __prior_config[item['section'] ~ '/' ~ item['name']] }}"]
           loop: "{{ ceph_osd_tuning }}"
           loop_control:
-            label: "{{ item['section'] }}/{{ item['name'] }} <- {{ __prior_config[item.section ~ '/' ~ item['name']] | default('(was unset)') }}"
+            label: "{{ item['section'] }}/{{ item['name'] }} <- {{ __prior_config[item['section'] ~ '/' ~ item['name']] | default('(was unset)') }}"
           when: (item['section'] ~ '/' ~ item['name']) in __prior_config
           register: __restore_set
           changed_when: __restore_set.rc == 0

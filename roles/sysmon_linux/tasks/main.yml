@@ -43,7 +43,7 @@
   loop: "{{ sysmon_linux_artefacts }}"
   loop_control: { label: "{{ item['deb'] }}" }
   when: >-
-    item['version'] not in (ansible_facts['packages'][item.name] | default([]) | map(attribute='version') | list)
+    item['version'] not in (ansible_facts['packages'][item['name']] | default([]) | map(attribute='version') | list)
 - name: "Create the Sysmon config directory"
   ansible.builtin.file:
     path: "{{ sysmon_linux_config_path | dirname }}"

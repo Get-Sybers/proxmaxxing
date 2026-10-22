@@ -54,7 +54,7 @@
             that:
               - __copies.results | map(attribute='stat.checksum') | unique | length == audit_artefacts | length
               - __copies.results | selectattr('item.1.deb', 'equalto', item['deb'])
-                                | map(attribute='stat.checksum') | unique | list == [item.sha256]
+                                | map(attribute='stat.checksum') | unique | list == [item['sha256']]
             success_msg: "Supply chain OK — {{ item['deb'] }} is byte-identical across Nexus and packages.microsoft.com and matches its pin."
             fail_msg: >-
               SUPPLY CHAIN MISMATCH for {{ item['deb'] }} — refusing to stage.
