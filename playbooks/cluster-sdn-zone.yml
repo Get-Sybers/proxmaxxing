@@ -15,7 +15,8 @@
         quiet: true
 
     - name: "Fact-find: the SDN zone as it is now (absent is fine)"
-      ansible.builtin.command: "pvesh get /cluster/sdn/zones/{{ sdn_zone }} --output-format=json"
+      ansible.builtin.command:
+        argv: [pvesh, get, "/cluster/sdn/zones/{{ sdn_zone }}", --output-format=json]
       register: __zone_now
       changed_when: false
       failed_when: false
@@ -62,7 +63,8 @@
           changed_when: __zone_apply.rc == 0
 
     - name: "Re-read the zone to prove it exists as VXLAN on disk"
-      ansible.builtin.command: "pvesh get /cluster/sdn/zones/{{ sdn_zone }} --output-format=json"
+      ansible.builtin.command:
+        argv: [pvesh, get, "/cluster/sdn/zones/{{ sdn_zone }}", --output-format=json]
       register: __zone_after
       changed_when: false
       check_mode: false

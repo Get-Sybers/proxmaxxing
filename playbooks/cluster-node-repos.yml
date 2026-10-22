@@ -153,7 +153,8 @@
         # Liveness probe, not a package op: asserts apt update exits clean and its
         # stderr carries no 401 / unsigned-repo error — no module surfaces that.
         - name: "Post-check: apt update is clean (no 401 / unsigned repo)"  # noqa: command-instead-of-module
-          ansible.builtin.command: apt-get update
+          ansible.builtin.command:
+            argv: [apt-get, update]
           register: __apt_check
           changed_when: false
           failed_when: >-
@@ -231,7 +232,8 @@
           loop_control: { label: "{{ item['item']['key'] }}" }
         # deliberate rescue cache rebuild; rc is inspected by the rollback report, which the apt module hides.
         - name: "Rescue: rebuild the apt cache against the restored files"  # noqa: command-instead-of-module
-          ansible.builtin.command: apt-get update
+          ansible.builtin.command:
+            argv: [apt-get, update]
           register: __restore_apt
           changed_when: false
           failed_when: false

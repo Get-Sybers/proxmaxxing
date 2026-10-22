@@ -6,18 +6,20 @@
     cluster_preflight_require_api_admin: false
     cluster_preflight_delegate_to: "{{ cluster_ceph_orphan_sweep_delegate_to }}"
 - name: "Preflight — rbd, pvesh and ceph are usable"
-  ansible.builtin.command: "{{ item }}"
+  ansible.builtin.command:
+    argv: "{{ item }}"
   loop:
-    - rbd --version
-    - pvesh get /version --output-format json
-    - ceph health
+    - [rbd, --version]
+    - [pvesh, get, /version, --output-format, json]
+    - [ceph, health]
   register: __cos_pre
   changed_when: false
   check_mode: false
   failed_when: __cos_pre.rc != 0
   delegate_to: "{{ cluster_ceph_orphan_sweep_delegate_to }}"
 - name: "Preflight — the pool exists"
-  ansible.builtin.command: "rbd ls {{ cluster_ceph_orphan_sweep_pool }}"
+  ansible.builtin.command:
+    argv: [rbd, ls, "{{ cluster_ceph_orphan_sweep_pool }}"]
   register: __cos_rbd_ls
   changed_when: false
   check_mode: false
@@ -26,7 +28,8 @@
   ansible.builtin.set_fact:
     __cos_vm_images: "{{ __cos_rbd_ls.stdout_lines | select('match', '^vm-[0-9]+-disk-[0-9]+$') | list }}"
 - name: "Enumerate PVE storage"
-  ansible.builtin.command: pvesh get /storage --output-format json
+  ansible.builtin.command:
+    argv: [pvesh, get, /storage, --output-format, json]
   register: __cos_storage
   changed_when: false
   check_mode: false
@@ -50,7 +53,8 @@
          | selectattr('pool', 'equalto', cluster_ceph_orphan_sweep_pool)
          | map(attribute='storage') | list }}
 - name: "Enumerate every live guest in the cluster (all nodes, any power state)"
-  ansible.builtin.command: pvesh get /cluster/resources --type vm --output-format json
+  ansible.builtin.command:
+    argv: [pvesh, get, /cluster/resources, --type, vm, --output-format, json]
   register: __cos_vms
   changed_when: false
   check_mode: false
@@ -63,7 +67,8 @@
          | selectattr('type', 'in', ['qemu', 'lxc'])
          | list }}
 - name: "Read every live guest config (VM /qemu/, CT /lxc/) for the referenced-disk set"
-  ansible.builtin.command: "pvesh get /nodes/{{ item['node'] }}/{{ item['type'] }}/{{ item['vmid'] }}/config --output-format json"
+  ansible.builtin.command:
+    argv: [pvesh, get, "/nodes/{{ item['node'] }}/{{ item['type'] }}/{{ item['vmid'] }}/config", --output-format, json]
   loop: "{{ __cos_live }}"
   loop_control:
     label: "{{ item['type'] }} {{ item['vmid'] }} on {{ item['node'] }}"
@@ -117,7 +122,8 @@
       {{ __cos_candidates | length }} orphan candidate(s):
       {{ __cos_candidates | join(', ') if __cos_candidates else '(none — pool clean)' }}
 - name: "Check each candidate for RBD watchers (a mapped disk has one)"
-  ansible.builtin.command: "rbd status {{ cluster_ceph_orphan_sweep_pool }}/{{ item }} --format json"
+  ansible.builtin.command:
+    argv: [rbd, status, "{{ cluster_ceph_orphan_sweep_pool }}/{{ item }}", --format, json]
   loop: "{{ __cos_candidates }}"
   register: __cos_watch
   changed_when: false

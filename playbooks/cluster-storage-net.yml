@@ -190,7 +190,8 @@
           register: __udevrule
         # udev reload must run inline before the interface stanzas are written, not deferred to a handler.
         - name: "Reload udev rules"  # noqa: no-handler
-          ansible.builtin.command: udevadm control --reload
+          ansible.builtin.command:
+            argv: [udevadm, control, --reload]
           changed_when: true
           when: __udevrule.changed
         - name: "Write the storage-network interface stanzas"
@@ -202,7 +203,8 @@
             mode: "0644"
           register: __ifcfg
         - name: "Confirm interfaces.d is sourced (it must be for this to take effect)"
-          ansible.builtin.command: grep -q '^source /etc/network/interfaces.d/' /etc/network/interfaces
+          ansible.builtin.command:
+            argv: [grep, -q, "^source /etc/network/interfaces.d/", /etc/network/interfaces]
           register: __sourced
           changed_when: false
           failed_when: __sourced.rc != 0
@@ -277,7 +279,8 @@
                 {{ l['iface'] }}: want {{ l['address'] }}|{{ l['mtu'] }}, kernel reports {{ __link_after.results[loop.index0].stdout }}
               {% endfor %}
         - name: "Test each link to its peer"
-          ansible.builtin.command: "ping -c2 -W2 -I {{ item['iface'] }} {{ item['peer'] }}"
+          ansible.builtin.command:
+            argv: [ping, -c2, -W2, -I, "{{ item['iface'] }}", "{{ item['peer'] }}"]
           loop: "{{ __links }}"
           loop_control: { label: "{{ item['iface'] }} -> {{ item['peer'] }} ({{ item['role'] }})" }
           register: __ping
@@ -311,7 +314,8 @@
           register: __sn_restore_absent
           failed_when: false
         - name: "Rescue: reload udev against the restored rules"
-          ansible.builtin.command: udevadm control --reload
+          ansible.builtin.command:
+            argv: [udevadm, control, --reload]
           register: __sn_restore_udev
           changed_when: true
           failed_when: false

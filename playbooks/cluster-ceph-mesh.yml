@@ -7,15 +7,18 @@
       ansible.builtin.set_fact:
         __m: "{{ mesh[inventory_hostname] }}"
     - name: "Preflight: frr is installed"
-      ansible.builtin.command: dpkg -s frr
+      ansible.builtin.command:
+        argv: [dpkg, -s, frr]
       changed_when: false
     - name: "Preflight: every mesh interface exists"
-      ansible.builtin.command: "ip link show {{ item['name'] }}"
+      ansible.builtin.command:
+        argv: [ip, link, show, "{{ item['name'] }}"]
       loop: "{{ __m.ifaces }}"
       loop_control: { label: "{{ item['name'] }} ({{ item['role'] }})" }
       changed_when: false
     - name: "Preflight: interfaces.d is sourced"
-      ansible.builtin.command: grep -q '^source /etc/network/interfaces.d/' /etc/network/interfaces
+      ansible.builtin.command:
+        argv: [grep, -q, "^source /etc/network/interfaces.d/", /etc/network/interfaces]
       changed_when: false
     - name: "Preflight: PVE SDN has no controllers (else PVE owns frr.conf)"
       ansible.builtin.shell: "! test -s /etc/pve/sdn/controllers.cfg"
@@ -208,7 +211,8 @@
           delay: 2
           changed_when: false
         - name: "Post-check: loopback-sourced reachability (what Ceph will actually use)"
-          ansible.builtin.command: "ping -c2 -W2 -I {{ __m.loopback }} {{ mesh[item].loopback }}"
+          ansible.builtin.command:
+            argv: [ping, -c2, -W2, -I, "{{ __m.loopback }}", "{{ mesh[item].loopback }}"]
           loop: "{{ mesh.keys() | difference([inventory_hostname]) }}"
           loop_control: { label: "{{ __m.loopback }} -> {{ mesh[item].loopback }}" }
           changed_when: false
@@ -457,7 +461,8 @@
               mon lines={{ __cutover_state_prior.stdout | default('') | regex_findall('mon\.') | length }},
               osd lines={{ __cutover_state_prior.stdout | default('') | regex_findall('(?m)^osd\.[0-9]') | length }}.
         - name: "Set noout so restarts don't trigger rebalancing"
-          ansible.builtin.command: timeout 30 ceph osd set noout
+          ansible.builtin.command:
+            argv: [timeout, "30", ceph, osd, set, noout]
           changed_when: true
         - name: "Point public_network at the mesh"
           ansible.builtin.lineinfile:
@@ -571,10 +576,12 @@
             state: restarted
           when: __mgraddr.stdout == ""
         - name: "Unset noout"
-          ansible.builtin.command: timeout 30 ceph osd unset noout
+          ansible.builtin.command:
+            argv: [timeout, "30", ceph, osd, unset, noout]
           changed_when: true
         - name: "Wait for HEALTH_OK"
-          ansible.builtin.command: ceph health
+          ansible.builtin.command:
+            argv: [ceph, health]
           register: __health
           until: "'HEALTH_OK' in __health.stdout"
           retries: 40

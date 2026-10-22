@@ -66,7 +66,7 @@
 
     - name: "install | Run the installer non-interactively (no reboot on an existing Proxmox host)"
       ansible.builtin.command:
-        cmd: "{{ cluster_ludus_install_root }}/ludus-server --no-prompt"
+        argv: ["{{ cluster_ludus_install_root }}/ludus-server", --no-prompt]
         chdir: "{{ cluster_ludus_install_root }}"
         creates: "{{ cluster_ludus_install_root }}/install/root-api-key"
       register: __cli_installer
