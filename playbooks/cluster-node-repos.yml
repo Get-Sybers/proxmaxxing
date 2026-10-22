@@ -17,18 +17,18 @@
         __os_codename: "{{ __codename_raw.stdout | trim }}"
     - name: "Fact-find: does each managed repo file exist, and what is its mode/digest?"
       ansible.builtin.stat:
-        path: "{{ node_repos_sources_dir }}/{{ item.name }}"
+        path: "{{ node_repos_sources_dir }}/{{ item['name'] }}"
         checksum_algorithm: sha256
       loop: "{{ node_repos_managed_files }}"
-      loop_control: { label: "{{ item.name }}" }
+      loop_control: { label: "{{ item['name'] }}" }
       register: __repo_stat
       check_mode: false
     - name: "Fact-find: capture the CONTENT of every managed repo file that exists"
       ansible.builtin.slurp:
-        src: "{{ item.stat.path }}"
+        src: "{{ item['stat']['path'] }}"
       loop: "{{ __repo_stat.results }}"
-      loop_control: { label: "{{ item.item.name }}" }
-      when: item.stat.exists
+      loop_control: { label: "{{ item['item']['name'] }}" }
+      when: item['stat']['exists']
       register: __repo_slurp
       check_mode: false
     - name: "Fact-find: is some OTHER file already providing the PVE repo?"
@@ -44,25 +44,25 @@
     - name: "Fact-find: index the captured prior state per file"
       ansible.builtin.set_fact:
         __prior_files: >-
-          {{ __prior_files | default({}) | combine({ item.0.item.name: {
-               'path': node_repos_sources_dir ~ '/' ~ item.0.item.name,
-               'existed': item.0.stat.exists,
-               'mode': item.0.stat.mode | default('0644'),
-               'owner': item.0.stat.pw_name | default('root'),
-               'group': item.0.stat.gr_name | default('root'),
-               'sha256': item.0.stat.checksum | default(''),
-               'b64': item.1.content | default(''),
-               'captured': item.1.content is defined } }) }}
+          {{ __prior_files | default({}) | combine({ item[0]['item']['name']: {
+               'path': node_repos_sources_dir ~ '/' ~ item[0]["item"]["name"],
+               'existed': item[0]["stat"]["exists"],
+               'mode': item[0]["stat"]["mode"] | default('0644'),
+               'owner': item[0]["stat"]["pw_name"] | default('root'),
+               'group': item[0]["stat"]["gr_name"] | default('root'),
+               'sha256': item[0]["stat"]["checksum"] | default(''),
+               'b64': item[1]["content"] | default(''),
+               'captured': item[1]["content"] is defined } }) }}
       loop: "{{ __repo_stat.results | zip(__repo_slurp.results) | list }}"
-      loop_control: { label: "{{ item.0.item.name }}" }
+      loop_control: { label: "{{ item[0]['item']['name'] }}" }
     - name: "Fact-find: report the prior state a rescue would put back"
       ansible.builtin.debug:
         msg: |-
           {{ inventory_hostname }} suite={{ __os_codename }}
           managed repo files, as found BEFORE any change:
           {% for n, f in __prior_files.items() %}
-            {{ n }}: {{ ('present, mode ' ~ f.mode ~ ', sha256 ' ~ f.sha256[:12] ~ '…, ' ~ (f.b64 | b64decode | length) ~ ' bytes captured')
-                         if f.existed else 'ABSENT (rescue would delete it again)' }}
+            {{ n }}: {{ ('present, mode ' ~ f['mode'] ~ ', sha256 ' ~ f['sha256'][:12] ~ '…, ' ~ (f['b64'] | b64decode | length) ~ ' bytes captured')
+                         if f['existed'] else 'ABSENT (rescue would delete it again)' }}
           {% endfor %}
           other file(s) already providing {{ node_repos_pve_component }}:
           {{ __existing_pve_repo.stdout_lines | default([]) | join(', ') or '(none)' }}
@@ -184,29 +184,29 @@
       rescue:
         - name: "Rescue: restore the bytes of every file that EXISTED before this run"
           ansible.builtin.copy:
-            content: "{{ item.value.b64 | b64decode }}"
-            dest: "{{ item.value.path }}"
-            owner: "{{ item.value.owner }}"
-            group: "{{ item.value.group }}"
-            mode: "{{ item.value.mode }}"
+            content: "{{ item['value']['b64'] | b64decode }}"
+            dest: "{{ item['value']['path'] }}"
+            owner: "{{ item['value']['owner'] }}"
+            group: "{{ item['value']['group'] }}"
+            mode: "{{ item['value']['mode'] }}"
           loop: "{{ __prior_files | dict2items | selectattr('value.existed') | list }}"
-          loop_control: { label: "{{ item.key }} <- {{ item.value.sha256[:12] }}… ({{ item.value.mode }})" }
+          loop_control: { label: "{{ item['key'] }} <- {{ item['value']['sha256'][:12] }}… ({{ item['value']['mode'] }})" }
           register: __restore_present
           failed_when: false
         - name: "Rescue: delete every file that did NOT exist before this run"
           ansible.builtin.file:
-            path: "{{ item.value.path }}"
+            path: "{{ item['value']['path'] }}"
             state: absent
           loop: "{{ __prior_files | dict2items | rejectattr('value.existed') | list }}"
-          loop_control: { label: "{{ item.key }} <- back to ABSENT" }
+          loop_control: { label: "{{ item['key'] }} <- back to ABSENT" }
           register: __restore_absent
           failed_when: false
         - name: "Rescue verify: re-stat every managed file"
           ansible.builtin.stat:
-            path: "{{ item.value.path }}"
+            path: "{{ item['value']['path'] }}"
             checksum_algorithm: sha256
           loop: "{{ __prior_files | dict2items }}"
-          loop_control: { label: "{{ item.key }}" }
+          loop_control: { label: "{{ item['key'] }}" }
           register: __restore_stat
           check_mode: false
           failed_when: false
@@ -214,21 +214,21 @@
           ansible.builtin.set_fact:
             __file_verdicts: >-
               {{ __file_verdicts | default([]) + [{
-                   'file': item.item.key,
-                   'was': ('sha256 ' ~ item.item.value.sha256[:12] ~ '… ' ~ item.item.value.mode
-                           ~ ' ' ~ item.item.value.owner ~ ':' ~ item.item.value.group)
-                          if item.item.value.existed else 'ABSENT',
-                   'now': ('sha256 ' ~ (item.stat.checksum | default('?'))[:12] ~ '… ' ~ (item.stat.mode | default('?'))
-                           ~ ' ' ~ (item.stat.pw_name | default('?')) ~ ':' ~ (item.stat.gr_name | default('?')))
-                          if item.stat.exists | default(false) else 'ABSENT',
-                   'ok': (item.stat.exists | default(false)) == item.item.value.existed
-                         and (((item.stat.checksum | default('')) == item.item.value.sha256
-                               and (item.stat.mode | default('')) == item.item.value.mode
-                               and (item.stat.pw_name | default('')) == item.item.value.owner
-                               and (item.stat.gr_name | default('')) == item.item.value.group)
-                              if item.item.value.existed else true) }] }}
+                   'file': item["item"]["key"],
+                   'was': ('sha256 ' ~ item["item"]["value"]["sha256"][:12] ~ '… ' ~ item["item"]["value"]["mode"]
+                           ~ ' ' ~ item['item']['value']['owner'] ~ ':' ~ item['item']['value']['group'])
+                          if item['item']['value']['existed'] else 'ABSENT',
+                   'now': ('sha256 ' ~ (item["stat"]["checksum"] | default('?'))[:12] ~ '… ' ~ (item["stat"]["mode"] | default('?'))
+                           ~ ' ' ~ (item['stat']['pw_name'] | default('?')) ~ ':' ~ (item['stat']['gr_name'] | default('?')))
+                          if item['stat']['exists'] | default(false) else 'ABSENT',
+                   'ok': (item["stat"]["exists"] | default(false)) == item["item"]["value"]["existed"]
+                         and (((item['stat']['checksum'] | default('')) == item['item']['value']['sha256']
+                               and (item['stat']['mode'] | default('')) == item['item']['value']['mode']
+                               and (item['stat']['pw_name'] | default('')) == item['item']['value']['owner']
+                               and (item['stat']['gr_name'] | default('')) == item['item']['value']['group'])
+                              if item['item']['value']['existed'] else true) }] }}
           loop: "{{ __restore_stat.results }}"
-          loop_control: { label: "{{ item.item.key }}" }
+          loop_control: { label: "{{ item['item']['key'] }}" }
         # deliberate rescue cache rebuild; rc is inspected by the rollback report, which the apt module hides.
         - name: "Rescue: rebuild the apt cache against the restored files"  # noqa: command-instead-of-module
           ansible.builtin.command: apt-get update
@@ -251,7 +251,7 @@
                                "NOT VERIFIED — at least one managed file does NOT match what was captured, so the
                                 apt configuration on this node is in an UNKNOWN state and needs manual inspection." }}
               {% for v in __file_verdicts %}
-                  {{ 'OK  ' if v.ok else 'FAIL' }} {{ v.file }}: captured={{ v.was }} now={{ v.now }}
+                  {{ 'OK  ' if v['ok'] else 'FAIL' }} {{ v['file'] }}: captured={{ v['was'] }} now={{ v['now'] }}
               {% endfor %}
                   restore write rcs: present={{ __restore_present.results | default([]) | selectattr('failed', 'defined') | map(attribute='failed') | list }}
                                      absent={{ __restore_absent.results | default([]) | selectattr('failed', 'defined') | map(attribute='failed') | list }}

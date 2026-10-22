@@ -19,31 +19,31 @@
     mode: "0750"
 - name: "Push the digest-gated .debs to the node"
   ansible.builtin.copy:
-    src: "{{ sysmon_linux_stage_dir }}/{{ item.deb }}"
-    dest: "{{ sysmon_linux_node_stage_dir }}/{{ item.deb }}"
+    src: "{{ sysmon_linux_stage_dir }}/{{ item['deb'] }}"
+    dest: "{{ sysmon_linux_node_stage_dir }}/{{ item['deb'] }}"
     owner: root
     group: root
     mode: "0640"
   loop: "{{ sysmon_linux_artefacts }}"
-  loop_control: { label: "{{ item.deb }}" }
+  loop_control: { label: "{{ item['deb'] }}" }
 - name: "Re-verify the pushed artefact digests on the node"
   ansible.builtin.stat:
-    path: "{{ sysmon_linux_node_stage_dir }}/{{ item.deb }}"
+    path: "{{ sysmon_linux_node_stage_dir }}/{{ item['deb'] }}"
     checksum_algorithm: sha256
   loop: "{{ sysmon_linux_artefacts }}"
-  loop_control: { label: "{{ item.deb }}" }
+  loop_control: { label: "{{ item['deb'] }}" }
   register: __sml_nodedigest
-  failed_when: __sml_nodedigest.stat.checksum != item.sha256
+  failed_when: __sml_nodedigest.stat.checksum != item['sha256']
 - name: "Gather installed-package facts"
   ansible.builtin.package_facts:
     manager: apt
 - name: "Install sysinternalsebpf then sysmonforlinux from the staged artefacts"
   ansible.builtin.apt:
-    deb: "{{ sysmon_linux_node_stage_dir }}/{{ item.deb }}"
+    deb: "{{ sysmon_linux_node_stage_dir }}/{{ item['deb'] }}"
   loop: "{{ sysmon_linux_artefacts }}"
-  loop_control: { label: "{{ item.deb }}" }
+  loop_control: { label: "{{ item['deb'] }}" }
   when: >-
-    item.version not in (ansible_facts.packages[item.name] | default([]) | map(attribute='version') | list)
+    item['version'] not in (ansible_facts['packages'][item.name] | default([]) | map(attribute='version') | list)
 - name: "Create the Sysmon config directory"
   ansible.builtin.file:
     path: "{{ sysmon_linux_config_path | dirname }}"
@@ -63,13 +63,13 @@
   ansible.builtin.service_facts:
 - name: "Install Sysmon with our config (first time)"
   ansible.builtin.command: "sysmon -accepteula -i {{ sysmon_linux_config_path }}"
-  when: "'sysmon.service' not in ansible_facts.services"
+  when: "'sysmon.service' not in ansible_facts['services']"
   register: __sml_install
   changed_when: __sml_install.rc == 0
 - name: "Re-apply the Sysmon config (config changed, already installed)"
   ansible.builtin.command: "sysmon -c {{ sysmon_linux_config_path }}"
   when:
-    - "'sysmon.service' in ansible_facts.services"
+    - "'sysmon.service' in ansible_facts['services']"
     - __sml_cfg.changed
   register: __sml_reconf
   changed_when: __sml_reconf.rc == 0

@@ -10,9 +10,9 @@
       ansible.builtin.command: dpkg -s frr
       changed_when: false
     - name: "Preflight: every mesh interface exists"
-      ansible.builtin.command: "ip link show {{ item.name }}"
+      ansible.builtin.command: "ip link show {{ item['name'] }}"
       loop: "{{ __m.ifaces }}"
-      loop_control: { label: "{{ item.name }} ({{ item.role }})" }
+      loop_control: { label: "{{ item['name'] }} ({{ item['role'] }})" }
       changed_when: false
     - name: "Preflight: interfaces.d is sourced"
       ansible.builtin.command: grep -q '^source /etc/network/interfaces.d/' /etc/network/interfaces
@@ -32,10 +32,10 @@
       check_mode: false
     - name: "Fact-find: slurp the ones that exist"
       ansible.builtin.slurp:
-        src: "{{ item.item }}"
+        src: "{{ item['item'] }}"
       loop: "{{ __mesh_stat.results }}"
-      loop_control: { label: "{{ item.item }}" }
-      when: item.stat.exists
+      loop_control: { label: "{{ item['item'] }}" }
+      when: item['stat']['exists']
       register: __mesh_slurp
       check_mode: false
     - name: "Fact-find: what does dummy0 look like RIGHT NOW?"
@@ -80,23 +80,23 @@
     - name: "Fact-find: index the captured file state per file"
       ansible.builtin.set_fact:
         __prior_mesh_files: >-
-          {{ __prior_mesh_files | default({}) | combine({ item.0.item: {
-               'existed': item.0.stat.exists,
-               'mode': item.0.stat.mode | default('0644'),
-               'owner': item.0.stat.pw_name | default('root'),
-               'group': item.0.stat.gr_name | default('root'),
-               'sha256': item.0.stat.checksum | default(''),
-               'b64': item.1.content | default(''),
-               'captured': item.1.content is defined } }) }}
+          {{ __prior_mesh_files | default({}) | combine({ item[0]['item']: {
+               'existed': item[0]["stat"]["exists"],
+               'mode': item[0]["stat"]["mode"] | default('0644'),
+               'owner': item[0]["stat"]["pw_name"] | default('root'),
+               'group': item[0]["stat"]["gr_name"] | default('root'),
+               'sha256': item[0]["stat"]["checksum"] | default(''),
+               'b64': item[1]["content"] | default(''),
+               'captured': item[1]["content"] is defined } }) }}
       loop: "{{ __mesh_stat.results | zip(__mesh_slurp.results) | list }}"
-      loop_control: { label: "{{ item.0.item }}" }
+      loop_control: { label: "{{ item[0]['item'] }}" }
     - name: "Fact-find: report the prior state a rescue would put back"
       ansible.builtin.debug:
         msg: |-
           {{ inventory_hostname }} — state captured BEFORE any change:
           files (restored byte-for-byte):
           {% for n, f in __prior_mesh_files.items() %}
-            {{ n }}: {{ ('present, ' ~ f.mode ~ ', sha256 ' ~ f.sha256[:12] ~ '…') if f.existed else 'ABSENT (rescue would delete it again)' }}
+            {{ n }}: {{ ('present, ' ~ f['mode'] ~ ', sha256 ' ~ f['sha256'][:12] ~ '…') if f['existed'] else 'ABSENT (rescue would delete it again)' }}
           {% endfor %}
           dummy0: {{ __dummy_prior.stdout }} (addr|mtu) -> target {{ __m.loopback }}/32 mtu 9000
             ({{ 'ALREADY at target — the rescue will NOT tear it down' if __dummy_prior.stdout.split('|')[0] == __m.loopback ~ '/32'
@@ -198,12 +198,12 @@
           when: __daemons.changed or __frrconf.changed
           throttle: 1
         - name: "Wait for fabric convergence (route to each peer egresses its fast interface)"
-          ansible.builtin.shell: "set -o pipefail; ip route get {{ item.key }} | grep -oP 'dev \\K\\S+'"
+          ansible.builtin.shell: "set -o pipefail; ip route get {{ item['key'] }} | grep -oP 'dev \\K\\S+'"
           args: { executable: /bin/bash }
           loop: "{{ expected_egress[inventory_hostname] | dict2items }}"
-          loop_control: { label: "{{ item.key }} -> {{ item.value }}" }
+          loop_control: { label: "{{ item['key'] }} -> {{ item['value'] }}" }
           register: __converge
-          until: __converge.stdout == item.value
+          until: __converge.stdout == item['value']
           retries: 30
           delay: 2
           changed_when: false
@@ -213,22 +213,22 @@
           loop_control: { label: "{{ __m.loopback }} -> {{ mesh[item].loopback }}" }
           changed_when: false
         - name: "Post-check: read the chosen egress interface for each peer loopback"
-          ansible.builtin.shell: "set -o pipefail; ip route get {{ item.key }} | grep -oP 'dev \\K\\S+'"
+          ansible.builtin.shell: "set -o pipefail; ip route get {{ item['key'] }} | grep -oP 'dev \\K\\S+'"
           args: { executable: /bin/bash }
           loop: "{{ expected_egress[inventory_hostname] | dict2items }}"
-          loop_control: { label: "{{ item.key }} expect {{ item.value }}" }
+          loop_control: { label: "{{ item['key'] }} expect {{ item['value'] }}" }
           register: __egress
           changed_when: false
         - name: "POST-CHECK: fast path preferred (negative test — LAN must NOT carry mesh traffic)"
           ansible.builtin.assert:
-            that: item.stdout == item.item.value
+            that: item['stdout'] == item['item']['value']
             fail_msg: >-
-              Route to {{ item.item.key }} egresses {{ item.stdout }},
-              expected {{ item.item.value }} — OpenFabric metrics are not being
+              Route to {{ item['item']['key'] }} egresses {{ item['stdout'] }},
+              expected {{ item['item']['value'] }} — OpenFabric metrics are not being
               honored; do NOT proceed to the Ceph cutover.
             quiet: true
           loop: "{{ __egress.results }}"
-          loop_control: { label: "{{ item.item.key }} via {{ item.stdout }}" }
+          loop_control: { label: "{{ item['item']['key'] }} via {{ item['stdout'] }}" }
         - name: "POST-CHECK: LAN static fallback is present in the FRR RIB (backup, not selected)"
           ansible.builtin.shell: |
             set -o pipefail
@@ -245,21 +245,21 @@
       rescue:
         - name: "Rescue: restore the bytes of every managed file that EXISTED"
           ansible.builtin.copy:
-            content: "{{ item.value.b64 | b64decode }}"
-            dest: "{{ item.key }}"
-            owner: "{{ item.value.owner }}"
-            group: "{{ item.value.group }}"
-            mode: "{{ item.value.mode }}"
+            content: "{{ item['value']['b64'] | b64decode }}"
+            dest: "{{ item['key'] }}"
+            owner: "{{ item['value']['owner'] }}"
+            group: "{{ item['value']['group'] }}"
+            mode: "{{ item['value']['mode'] }}"
           loop: "{{ __prior_mesh_files | dict2items | selectattr('value.existed') | list }}"
-          loop_control: { label: "{{ item.key }} <- {{ item.value.sha256[:12] }}…" }
+          loop_control: { label: "{{ item['key'] }} <- {{ item['value']['sha256'][:12] }}…" }
           register: __mesh_restore_present
           failed_when: false
         - name: "Rescue: delete every managed file that did NOT exist"
           ansible.builtin.file:
-            path: "{{ item.key }}"
+            path: "{{ item['key'] }}"
             state: absent
           loop: "{{ __prior_mesh_files | dict2items | rejectattr('value.existed') | list }}"
-          loop_control: { label: "{{ item.key }} <- back to ABSENT" }
+          loop_control: { label: "{{ item['key'] }} <- back to ABSENT" }
           register: __mesh_restore_absent
           failed_when: false
         - name: "Rescue: restore the live net.ipv4.ip_forward value"
@@ -313,10 +313,10 @@
           failed_when: false
         - name: "Rescue verify: re-stat every managed file"
           ansible.builtin.stat:
-            path: "{{ item.key }}"
+            path: "{{ item['key'] }}"
             checksum_algorithm: sha256
           loop: "{{ __prior_mesh_files | dict2items }}"
-          loop_control: { label: "{{ item.key }}" }
+          loop_control: { label: "{{ item['key'] }}" }
           register: __mesh_restore_stat
           check_mode: false
           failed_when: false
@@ -338,14 +338,14 @@
           ansible.builtin.set_fact:
             __mesh_verdicts: >-
               {{ __mesh_verdicts | default([]) + [{
-                   'file': item.item.key,
-                   'was': ('sha256 ' ~ item.item.value.sha256[:12] ~ '…') if item.item.value.existed else 'ABSENT',
-                   'now': ('sha256 ' ~ (item.stat.checksum | default('?'))[:12] ~ '…') if item.stat.exists | default(false) else 'ABSENT',
-                   'ok': (item.stat.exists | default(false)) == item.item.value.existed
-                         and ((item.stat.checksum | default('')) == item.item.value.sha256
-                              if item.item.value.existed else true) }] }}
+                   'file': item["item"]["key"],
+                   'was': ('sha256 ' ~ item["item"]["value"]["sha256"][:12] ~ '…') if item["item"]["value"]["existed"] else 'ABSENT',
+                   'now': ('sha256 ' ~ (item["stat"]["checksum"] | default('?'))[:12] ~ '…') if item["stat"]["exists"] | default(false) else 'ABSENT',
+                   'ok': (item["stat"]["exists"] | default(false)) == item["item"]["value"]["existed"]
+                         and ((item['stat']['checksum'] | default('')) == item['item']['value']['sha256']
+                              if item['item']['value']['existed'] else true) }] }}
           loop: "{{ __mesh_restore_stat.results }}"
-          loop_control: { label: "{{ item.item.key }}" }
+          loop_control: { label: "{{ item['item']['key'] }}" }
         - name: "Rescue verify: the rollback verdict"
           ansible.builtin.set_fact:
             __mesh_dummy_ok: "{{ (__mesh_after.stdout | default('|;|,|')).split(';')[0] == __dummy_prior.stdout }}"
@@ -367,7 +367,7 @@
                                "NOT VERIFIED — at least one item does NOT match what was captured, so the storage mesh on
                                 this node is in an UNKNOWN state and needs manual inspection." }}
               {% for v in __mesh_verdicts %}
-                  {{ 'OK  ' if v.ok else 'FAIL' }} {{ v.file }}: captured={{ v.was }} now={{ v.now }}
+                  {{ 'OK  ' if v['ok'] else 'FAIL' }} {{ v['file'] }}: captured={{ v['was'] }} now={{ v['now'] }}
               {% endfor %}
                   {{ 'OK  ' if __mesh_dummy_ok | bool else 'FAIL' }} dummy0 (addr|mtu): captured={{ __dummy_prior.stdout }} now={{ (__mesh_after.stdout | default('?')).split(';')[0] }}
                        ({{ 'this run configured it, so the rescue put it back'
@@ -416,10 +416,10 @@
           changed_when: false
         - name: "Preflight: every node sees every loopback (full mesh check)"
           ansible.builtin.command:
-            argv: [ping, -c1, -W2, "{{ item.1.value.loopback }}"]
+            argv: [ping, -c1, -W2, "{{ item[1]['value']['loopback'] }}"]
           loop: "{{ mesh | dict2items | product(mesh | dict2items) | list }}"
-          delegate_to: "{{ item.0.key }}"
-          loop_control: { label: "from {{ item.0.key }} to {{ item.1.key }} ({{ item.1.value.loopback }})" }
+          delegate_to: "{{ item[0]['key'] }}"
+          loop_control: { label: "from {{ item[0]['key'] }} to {{ item[1]['key'] }} ({{ item[1]['value']['loopback'] }})" }
           changed_when: false
         - name: "Fact-find: capture the bytes of /etc/pve/ceph.conf before rewriting it"
           ansible.builtin.slurp:
@@ -532,30 +532,31 @@
             cmd: |
               set -o pipefail
               dump=$(timeout 30 ceph mon dump 2>/dev/null) || { echo "mon dump failed — refusing to touch mons" >&2; exit 1; }
-              if echo "$dump" | grep "mon.{{ item.key }}$" | grep -q '{{ item.value.loopback }}'; then
+              if echo "$dump" | grep "mon.{{ item['key'] }}$" | grep -q '{{ item['value']['loopback'] }}'; then
                 echo "already on mesh"; exit 0
               fi
-              if echo "$dump" | grep -q "mon.{{ item.key }}$"; then
-                pveceph mon destroy {{ item.key }}
+              if echo "$dump" | grep -q "mon.{{ item['key'] }}$"; then
+                pveceph mon destroy {{ item['key'] }}
                 ok=0
                 for i in $(seq 1 30); do
                   n=$(timeout 30 ceph quorum_status -f json 2>/dev/null | python3 -c 'import sys,json; print(len(json.load(sys.stdin)["quorum_names"]))' || echo 0)
                   [ "$n" -ge 2 ] && { ok=1; break; }
                   sleep 2
                 done
-                [ "$ok" -eq 1 ] || { echo "quorum did not recover after destroying mon.{{ item.key }} — NOT creating into a quorum-less cluster" >&2; exit 1; }
+                [ "$ok" -eq 1 ] || { echo "quorum did not recover after destroying mon.{{ item['key'] }}" \
+                  "— NOT creating into a quorum-less cluster" >&2; exit 1; }
               fi
-              pveceph mon create --mon-address {{ item.value.loopback }}
+              pveceph mon create --mon-address {{ item['value']['loopback'] }}
               for i in $(seq 1 60); do
                 n=$(timeout 30 ceph quorum_status -f json 2>/dev/null | python3 -c 'import sys,json; print(len(json.load(sys.stdin)["quorum_names"]))' || echo 0)
                 [ "$n" -eq {{ mesh | length }} ] && exit 0
                 sleep 3
               done
-              echo "mon {{ item.key }} did not rejoin quorum" >&2; exit 1
+              echo "mon {{ item['key'] }} did not rejoin quorum" >&2; exit 1
             executable: /bin/bash
           loop: "{{ mesh | dict2items }}"
-          delegate_to: "{{ item.key }}"
-          loop_control: { label: "mon.{{ item.key }} -> {{ item.value.loopback }}" }
+          delegate_to: "{{ item['key'] }}"
+          loop_control: { label: "mon.{{ item['key'] }} -> {{ item['value']['loopback'] }}" }
           register: __monmove
           changed_when: "'already on mesh' not in __monmove.stdout"
         # yamllint enable rule:line-length

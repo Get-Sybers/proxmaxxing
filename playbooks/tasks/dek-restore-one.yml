@@ -7,7 +7,7 @@
   args:
     stdin: >-
       {{ {'op': 'reencrypt', 'old_key': __dek_old_key, 'new_key': __dek_new_key,
-          'data': item.ct} | to_json }}
+          'data': item["ct"]} | to_json }}
     stdin_add_newline: false
   register: __dek_re
   no_log: true
@@ -19,15 +19,15 @@
     tasks_from: record_patch_fields
   vars:
     cluster_pb_store_collection_name: users
-    cluster_pb_store_record_id: "{{ item.id }}"
-    cluster_pb_store_record_fields: "{{ {item.field: (__dek_re.stdout | from_json).data} }}"
+    cluster_pb_store_record_id: "{{ item['id'] }}"
+    cluster_pb_store_record_fields: "{{ {item['field']: (__dek_re.stdout | from_json).data} }}"
 - name: "dek-restore-one | Read the record back (never trust the write)"
   ansible.builtin.include_role:
     name: get_sybers.cluster.cluster_pb_store
     tasks_from: record_read_id
   vars:
     cluster_pb_store_collection_name: users
-    cluster_pb_store_record_id: "{{ item.id }}"
+    cluster_pb_store_record_id: "{{ item['id'] }}"
 - name: "dek-restore-one | Open the persisted ciphertext under the NEW key"
   ansible.builtin.command:
     argv:
@@ -44,24 +44,24 @@
   changed_when: false
 - name: "dek-restore-one | Assert the recovered plaintext is byte-identical"
   ansible.builtin.assert:
-    that: (__dek_readback.stdout | hash('sha256')) == item.sha
+    that: (__dek_readback.stdout | hash('sha256')) == item['sha']
     fail_msg: >-
-      RE-ENCRYPTION MISMATCH for {{ item.userID }}.{{ item.field }}: the value
+      RE-ENCRYPTION MISMATCH for {{ item['userID'] }}.{{ item['field'] }}: the value
       persisted under the new key does not recover the plaintext captured
       before the rotation. The database is now INCONSISTENT for this field.
       Do NOT restart anything further; the rescue path restores the previous
       config.yml (old key) — after which THIS field is the one that no longer
       matches, and must be restored from the operator's own record of it.
     success_msg: >-
-      {{ item.userID }}.{{ item.field }}: re-encrypted under the new key and
+      {{ item['userID'] }}.{{ item['field'] }}: re-encrypted under the new key and
       read back to the identical plaintext.
     quiet: true
 - name: "dek-restore-one | Record the outcome (shape only)"
   ansible.builtin.set_fact:
     __dek_restored: >-
       {{ __dek_restored | default([]) + [{
-           'userID': item.userID,
-           'field': item.field,
+           'userID': item["userID"],
+           'field': item["field"],
            'status': (__dek_re.stdout | from_json).status,
            'verified': true
          }] }}

@@ -94,16 +94,16 @@
       ansible.builtin.set_fact:
         __pool_posture: >-
           {{ __pool_posture | default([]) + [{
-               'name': item.pool_name,
-               'size': item.size,
-               'min_size': item.min_size,
-               'pg_num': item.pg_num,
-               'no_write_tolerance': (item.min_size == item.size),
-               'unplaceable': (item.size > (__osd_hosts | length))
+               'name': item["pool_name"],
+               'size': item["size"],
+               'min_size': item["min_size"],
+               'pg_num': item["pg_num"],
+               'no_write_tolerance': (item["min_size"] == item["size"]),
+               'unplaceable': (item["size"] > (__osd_hosts | length))
              }] }}
       loop: "{{ __pools }}"
       loop_control:
-        label: "{{ item.pool_name }}"
+        label: "{{ item['pool_name'] }}"
     - name: "Collect mon-store free space reported by each node"
       ansible.builtin.set_fact:
         __mon_store: >-
@@ -216,12 +216,12 @@
       ansible.builtin.set_fact:
         __tuning_mismatch: >-
           {{ __tuning_mismatch | default([]) +
-             ([item.key ~ '=' ~ (__config[item.key]) ~ ' (expected ' ~ item.value ~ ')']
-              if (item.key in __config and (__config[item.key] | string) != (item.value | string))
+             ([item.key ~ '=' ~ (__config[item.key]) ~ ' (expected ' ~ item['value'] ~ ')']
+              if (item['key'] in __config and (__config[item.key] | string) != (item['value'] | string))
               else []) }}
       loop: "{{ ceph_expected_config | dict2items }}"
       loop_control:
-        label: "{{ item.key }}"
+        label: "{{ item['key'] }}"
     - name: "Fold tuning mismatches into the findings"
       ansible.builtin.set_fact:
         __findings: >-

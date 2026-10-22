@@ -60,7 +60,7 @@
       ansible.builtin.include_tasks: tasks/token-restore-one.yml
       loop: "{{ __tok_targets }}"
       loop_control:
-        label: "{{ item.userID }}"
+        label: "{{ item['userID'] }}"
     - name: "Summary (shape only)"
       ansible.builtin.debug:
         msg: >-

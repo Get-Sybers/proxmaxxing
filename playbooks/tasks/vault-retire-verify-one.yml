@@ -1,7 +1,7 @@
 ---
 - name: "vault-retire-verify-one | Stat Ludus's own copy (checksum only, never contents)"
   ansible.builtin.stat:
-    path: "{{ item.ludus_own_path }}"
+    path: "{{ item['ludus_own_path'] }}"
     checksum_algorithm: sha256
   register: __vm_own
   check_mode: false
@@ -10,27 +10,27 @@
   ansible.builtin.set_fact:
     __vm_own_exists: "{{ __vm_own.stat.exists | default(false) }}"
     __vm_own_size: "{{ __vm_own.stat.size | default(0) }}"
-    __vm_own_identical: "{{ (__vm_own.stat.checksum | default('')) == item.sha256 }}"
+    __vm_own_identical: "{{ (__vm_own.stat.checksum | default('')) == item['sha256'] }}"
 - name: "vault-retire-verify-one | Refuse to classify RETIRE without Ludus's own copy"
   ansible.builtin.assert:
     that:
       - __vm_own_exists | bool
       - (__vm_own_size | int) > 0
     fail_msg: >-
-      Entry {{ item.label }} is classified RETIRE on the grounds that Ludus
+      Entry {{ item['label'] }} is classified RETIRE on the grounds that Ludus
       keeps its own authoritative copy — but that copy is missing or empty
       (exists={{ __vm_own_exists }}, size={{ __vm_own_size }}). Retiring the
       vault entry would destroy the only copy. STOP: either the classification
       is wrong (in which case this entry should MIGRATE) or Ludus's own storage
       has been damaged.
     success_msg: >-
-      Entry {{ item.label }}: Ludus's own copy present
+      Entry {{ item['label'] }}: Ludus's own copy present
       ({{ __vm_own_size }} bytes) — RETIRE classification stands.
     quiet: true
 - name: "vault-retire-verify-one | Report the duplicate check (shape only)"
   ansible.builtin.debug:
     msg: >-
-      {{ item.label }}: RETIRE. Ludus's own copy present, {{ __vm_own_size }}
+      {{ item['label'] }}: RETIRE. Ludus's own copy present, {{ __vm_own_size }}
       bytes, byte-identical to the vault copy = {{ __vm_own_identical }}.
       {{ 'Identical — a plain duplicate.' if (__vm_own_identical | bool)
          else 'NOT byte-identical. Expected when the vault copy is LABELLED
@@ -40,7 +40,7 @@
   ansible.builtin.set_fact:
     __vm_retired_verified: >-
       {{ __vm_retired_verified | default([]) + [{
-           'label': item.label,
+           'label': item["label"],
            'ludus_own_copy': 'present',
            'byte_identical': (__vm_own_identical | bool)
          }] }}

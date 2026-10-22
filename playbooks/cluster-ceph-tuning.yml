@@ -71,9 +71,9 @@
           CHECK MODE — nothing was changed, and no rollback was attempted.
           config keys that WOULD change:
           {% for s in ceph_osd_tuning %}
-          {%   set k = s.section ~ '/' ~ s.name %}
-          {%   if __prior_config[k] | default('') != s.value | string %}
-            {{ k }}: {{ __prior_config[k] | default('UNSET', true) }} -> {{ s.value }}   ({{ s.why }})
+          {%   set k = s['section'] ~ '/' ~ s['name'] %}
+          {%   if __prior_config[k] | default('') != s['value'] | string %}
+            {{ k }}: {{ __prior_config[k] | default('UNSET', true) }} -> {{ s['value'] }}   ({{ s['why'] }})
           {%   endif %}
           {% endfor %}
           pools that WOULD change:
@@ -90,10 +90,10 @@
       block:
         - name: "Set the osd tuning keys in the mon config store"
           ansible.builtin.command:
-            argv: [ceph, config, set, "{{ item.section }}", "{{ item.name }}", "{{ item.value }}"]
+            argv: [ceph, config, set, "{{ item['section'] }}", "{{ item['name'] }}", "{{ item['value'] }}"]
           loop: "{{ ceph_osd_tuning }}"
-          loop_control: { label: "{{ item.section }}/{{ item.name }} = {{ item.value }} ({{ item.why }})" }
-          changed_when: __prior_config[item.section ~ '/' ~ item.name] | default('') != item.value
+          loop_control: { label: "{{ item['section'] }}/{{ item['name'] }} = {{ item['value'] }} ({{ item['why'] }})" }
+          changed_when: __prior_config[item.section ~ '/' ~ item['name']] | default('') != item['value']
         - name: "Force every pool to a placeable replica count"
           ansible.builtin.command:
             argv: [ceph, osd, pool, set, "{{ item }}", size, "{{ ceph_pool_size }}"]
@@ -107,11 +107,11 @@
         - name: "Keep ceph.conf defaults consistent with the pool policy"
           ansible.builtin.lineinfile:
             path: "{{ ceph_conf_path }}"
-            regexp: "^\tosd_pool_default_{{ item.key }} = "
-            line: "\tosd_pool_default_{{ item.key }} = {{ item.value }}"
+            regexp: "^\tosd_pool_default_{{ item['key'] }} = "
+            line: "\tosd_pool_default_{{ item['key'] }} = {{ item['value'] }}"
             insertafter: '^\[global\]'
           loop: "{{ ceph_conf_defaults }}"
-          loop_control: { label: "osd_pool_default_{{ item.key }}" }
+          loop_control: { label: "osd_pool_default_{{ item['key'] }}" }
         - name: "Post-check: re-read the mon config store"
           ansible.builtin.command: ceph config dump -f json
           register: __config_dump_after
@@ -163,21 +163,21 @@
       rescue:
         - name: "Rescue: restore config keys that HAD a prior value"
           ansible.builtin.command:
-            argv: [ceph, config, set, "{{ item.section }}", "{{ item.name }}",
-                   "{{ __prior_config[item.section ~ '/' ~ item.name] }}"]
+            argv: [ceph, config, set, "{{ item['section'] }}", "{{ item['name'] }}",
+                   "{{ __prior_config[item.section ~ '/' ~ item['name']] }}"]
           loop: "{{ ceph_osd_tuning }}"
           loop_control:
-            label: "{{ item.section }}/{{ item.name }} <- {{ __prior_config[item.section ~ '/' ~ item.name] | default('(was unset)') }}"
-          when: (item.section ~ '/' ~ item.name) in __prior_config
+            label: "{{ item['section'] }}/{{ item['name'] }} <- {{ __prior_config[item.section ~ '/' ~ item['name']] | default('(was unset)') }}"
+          when: (item['section'] ~ '/' ~ item['name']) in __prior_config
           register: __restore_set
           changed_when: __restore_set.rc == 0
           failed_when: false
         - name: "Rescue: remove config keys that had NO prior value (unset is not empty)"
           ansible.builtin.command:
-            argv: [ceph, config, rm, "{{ item.section }}", "{{ item.name }}"]
+            argv: [ceph, config, rm, "{{ item['section'] }}", "{{ item['name'] }}"]
           loop: "{{ ceph_osd_tuning }}"
-          loop_control: { label: "{{ item.section }}/{{ item.name }} <- back to UNSET" }
-          when: (item.section ~ '/' ~ item.name) not in __prior_config
+          loop_control: { label: "{{ item['section'] }}/{{ item['name'] }} <- back to UNSET" }
+          when: (item['section'] ~ '/' ~ item['name']) not in __prior_config
           register: __restore_rm
           changed_when: __restore_rm.rc == 0
           failed_when: false
@@ -201,7 +201,11 @@
           ansible.builtin.copy:
             content: "{{ __ceph_conf_prior.content | b64decode }}"
             dest: "{{ ceph_conf_path }}"
-            mode: "0644"
+            # pmxcfs presents every file under /etc/pve as root:www-data 0640 and
+            # takes no other identity; declaring the one it presents is a no-op.
+            owner: root
+            group: www-data
+            mode: "0640"
           register: __restore_conf
           failed_when: false
         - name: "Rescue verify: re-read the mon config store"
@@ -285,10 +289,10 @@
                                        pool-min-size={{ __restore_min.results | default([]) | selectattr('rc', 'defined') | map(attribute='rc') | list }}
                   ceph.conf restored byte-for-byte: {{ __conf_restored }}
               {% for v in __config_verdicts %}
-                  {{ 'OK  ' if v.ok else 'FAIL' }} {{ v.key }}: captured={{ v.was }} now={{ v.now }}
+                  {{ 'OK  ' if v['ok'] else 'FAIL' }} {{ v['key'] }}: captured={{ v['was'] }} now={{ v['now'] }}
               {% endfor %}
               {% for v in __pool_verdicts %}
-                  {{ 'OK  ' if v.ok else 'FAIL' }} pool {{ v.pool }}: captured={{ v.was }} now={{ v.now }}
+                  {{ 'OK  ' if v['ok'] else 'FAIL' }} pool {{ v['pool'] }}: captured={{ v['was'] }} now={{ v['now'] }}
               {% endfor %}
               (3) NOTE: a pool `size` revert restores the NUMBER immediately, but the
                   re-replication it triggers is real backfill work — check `ceph -s`.

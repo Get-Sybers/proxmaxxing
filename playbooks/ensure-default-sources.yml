@@ -25,11 +25,11 @@
       ansible.builtin.set_fact:
         __ds_desired: >-
           {{ __ds_desired | default([])
-             + [ { 'id': default_sources_owner ~ '-' ~ default_sources_org_slug ~ '-' ~ item.slug,
-                   'url': item.url } ] }}
+             + [ { 'id': default_sources_owner ~ '-' ~ default_sources_org_slug ~ '-' ~ item['slug'],
+                   'url': item["url"] } ] }}
       loop: "{{ default_sources }}"
       loop_control:
-        label: "{{ item.slug }}"
+        label: "{{ item['slug'] }}"
     - name: "List every registered source as JSON"
       ansible.builtin.command: ludus source list --json
       environment:
@@ -64,12 +64,12 @@
           purge {{ __ds_to_remove | length }}
           {{ (': ' ~ (__ds_to_remove | map(attribute='sourceID') | join(', '))) if __ds_to_remove | length else '' }}.
     - name: "Remove each retired source"
-      ansible.builtin.command: "ludus source rm {{ item.sourceID }}"
+      ansible.builtin.command: "ludus source rm {{ item['sourceID'] }}"
       environment:
         LUDUS_API_KEY: "{{ __cla_api_key }}"
       loop: "{{ __ds_to_remove }}"
       loop_control:
-        label: "{{ item.sourceID }} ({{ item.url | default('n/a') }})"
+        label: "{{ item['sourceID'] }} ({{ item['url'] | default('n/a') }})"
       register: __ds_rm
       changed_when: __ds_rm.rc == 0
       failed_when: false
@@ -77,14 +77,14 @@
     - name: "Per-source removal result (key-shaped tokens scrubbed)"
       ansible.builtin.debug:
         msg: >-
-          {{ item.item.sourceID }}:
-          {{ 'removed' if item.rc == 0 else
-             ('FAILED rc=' ~ item.rc ~ ' — ' ~
-              ((item.stderr | default('')) ~ ' ' ~ (item.stdout | default(''))
+          {{ item['item']['sourceID'] }}:
+          {{ 'removed' if item['rc'] == 0 else
+             ('FAILED rc=' ~ item['rc'] ~ ' — ' ~
+              ((item['stderr'] | default('')) ~ ' ' ~ (item['stdout'] | default(''))
                | regex_replace('[A-Za-z0-9_-]+\\.[A-Za-z0-9._+/=-]{20,}', '<redacted>') | trim)) }}
       loop: "{{ __ds_rm.results | default([]) }}"
       loop_control:
-        label: "{{ item.item.sourceID }}"
+        label: "{{ item['item']['sourceID'] }}"
       when: __ds_rm.results is defined
     - name: "Fail if any removal errored"
       ansible.builtin.assert:
@@ -96,13 +96,13 @@
         quiet: true
     - name: "Add each missing default source as {{ default_sources_owner }}"
       ansible.builtin.command: >-
-        ludus {{ __ds_impersonate }} source add {{ item.url }}
-        --id {{ item.id }} --ref {{ default_sources_ref }} --all
+        ludus {{ __ds_impersonate }} source add {{ item['url'] }}
+        --id {{ item['id'] }} --ref {{ default_sources_ref }} --all
       environment:
         LUDUS_API_KEY: "{{ __cla_api_key }}"
       loop: "{{ __ds_to_add }}"
       loop_control:
-        label: "{{ item.id }}"
+        label: "{{ item['id'] }}"
       register: __ds_add
       changed_when: __ds_add.rc == 0
       failed_when: false
@@ -110,14 +110,14 @@
     - name: "Per-source add result (key-shaped tokens scrubbed)"
       ansible.builtin.debug:
         msg: >-
-          {{ item.item.id }}:
-          {{ 'registered' if item.rc == 0 else
-             ('FAILED rc=' ~ item.rc ~ ' — ' ~
-              ((item.stderr | default('')) ~ ' ' ~ (item.stdout | default(''))
+          {{ item['item']['id'] }}:
+          {{ 'registered' if item['rc'] == 0 else
+             ('FAILED rc=' ~ item['rc'] ~ ' — ' ~
+              ((item['stderr'] | default('')) ~ ' ' ~ (item['stdout'] | default(''))
                | regex_replace('[A-Za-z0-9_-]+\\.[A-Za-z0-9._+/=-]{20,}', '<redacted>') | trim)) }}
       loop: "{{ __ds_add.results | default([]) }}"
       loop_control:
-        label: "{{ item.item.id }}"
+        label: "{{ item['item']['id'] }}"
       when: __ds_add.results is defined
     - name: "Fail if any add did not succeed"
       ansible.builtin.assert:
@@ -142,22 +142,22 @@
         __ds_after_ids: "{{ (__ds_after.stdout | default('[]') | from_json) | map(attribute='sourceID') | list }}"
     - name: "Every desired default source is registered"
       ansible.builtin.assert:
-        that: item.id in __ds_after_ids
+        that: item['id'] in __ds_after_ids
         fail_msg: >-
-          '{{ item.id }}' ({{ item.url }}) is still not registered after the add
+          '{{ item["id"] }}' ({{ item["url"] }}) is still not registered after the add
           reported success — investigate before relying on it.
         quiet: true
       loop: "{{ __ds_desired }}"
       loop_control:
-        label: "{{ item.id }}"
+        label: "{{ item['id'] }}"
     - name: "Every purged source is gone"
       ansible.builtin.assert:
-        that: item.sourceID not in __ds_after_ids
-        fail_msg: "'{{ item.sourceID }}' is still registered after removal."
+        that: item['sourceID'] not in __ds_after_ids
+        fail_msg: "'{{ item['sourceID'] }}' is still registered after removal."
         quiet: true
       loop: "{{ __ds_to_remove }}"
       loop_control:
-        label: "{{ item.sourceID }}"
+        label: "{{ item['sourceID'] }}"
     - name: "Summary"
       ansible.builtin.debug:
         msg: >-

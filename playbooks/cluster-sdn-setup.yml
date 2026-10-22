@@ -96,13 +96,13 @@
               - --zone
               - "{{ sdn_zone }}"
               - --vnet
-              - "r{{ item.number }}"
+              - "r{{ item['number'] }}"
               - --tag
-              - "{{ sdn_vxlan_tag_base + item.number }}"
+              - "{{ sdn_vxlan_tag_base + item['number'] }}"
               - --vlanaware
               - "1"
           loop: "{{ sdn_range_vnets }}"
-          when: "'r' ~ item.number not in __existing_vnets"
+          when: "'r' ~ item['number'] not in __existing_vnets"
           register: __range_vnets
           changed_when: true
         - name: "Apply pending SDN config cluster-wide"
@@ -265,10 +265,10 @@
       check_mode: false
     - name: "Fact-find: slurp the ones that exist"
       ansible.builtin.slurp:
-        src: "{{ item.item }}"
+        src: "{{ item['item'] }}"
       loop: "{{ __sdnf_stat.results }}"
-      loop_control: { label: "{{ item.item }}" }
-      when: item.stat.exists
+      loop_control: { label: "{{ item['item'] }}" }
+      when: item['stat']['exists']
       register: __sdnf_slurp
       check_mode: false
     - name: "Fact-find: the current state of dnsmasq"
@@ -286,22 +286,22 @@
     - name: "Fact-find: index the captured file state per file"
       ansible.builtin.set_fact:
         __prior_sdn_files: >-
-          {{ __prior_sdn_files | default({}) | combine({ item.0.item: {
-               'existed': item.0.stat.exists,
-               'mode': item.0.stat.mode | default('0644'),
-               'owner': item.0.stat.pw_name | default('root'),
-               'group': item.0.stat.gr_name | default('root'),
-               'sha256': item.0.stat.checksum | default(''),
-               'b64': item.1.content | default(''),
-               'captured': item.1.content is defined } }) }}
+          {{ __prior_sdn_files | default({}) | combine({ item[0]['item']: {
+               'existed': item[0]["stat"]["exists"],
+               'mode': item[0]["stat"]["mode"] | default('0644'),
+               'owner': item[0]["stat"]["pw_name"] | default('root'),
+               'group': item[0]["stat"]["gr_name"] | default('root'),
+               'sha256': item[0]["stat"]["checksum"] | default(''),
+               'b64': item[1]["content"] | default(''),
+               'captured': item[1]["content"] is defined } }) }}
       loop: "{{ __sdnf_stat.results | zip(__sdnf_slurp.results) | list }}"
-      loop_control: { label: "{{ item.0.item }}" }
+      loop_control: { label: "{{ item[0]['item'] }}" }
     - name: "Fact-find: report the prior state a rescue would put back"
       ansible.builtin.debug:
         msg: |-
           files (restored byte-for-byte):
           {% for n, f in __prior_sdn_files.items() %}
-            {{ n }}: {{ ('present, ' ~ f.mode ~ ', sha256 ' ~ f.sha256[:12] ~ '…') if f.existed else 'ABSENT (rescue would delete it again)' }}
+            {{ n }}: {{ ('present, ' ~ f['mode'] ~ ', sha256 ' ~ f['sha256'][:12] ~ '…') if f['existed'] else 'ABSENT (rescue would delete it again)' }}
           {% endfor %}
           dnsmasq: {{ __dnsmasq_prior.stdout | default('?|?') }} (enabled|active)
     - name: "Preflight: every prior value needed for a rollback was captured"
@@ -338,8 +338,8 @@
                   post-up   iptables -C FORWARD -s '{{ sdn_nat_address }}/24' -d {{ cluster_lan_cidr }} -j DROP 2>/dev/null || iptables -I FORWARD 1 -s '{{ sdn_nat_address }}/24' -d {{ cluster_lan_cidr }} -j DROP
                   post-down iptables -D FORWARD -s '{{ sdn_nat_address }}/24' -d {{ cluster_lan_cidr }} -j DROP
               {% for r in sdn_range_routes %}
-                  post-up   ip route add 10.{{ r.second_octet }}.0.0/16 via {{ sdn_nat_address.rsplit('.', 1)[0] }}.{{ 100 + r.second_octet }} dev {{ sdn_nat_vnet }} || true
-                  post-down ip route del 10.{{ r.second_octet }}.0.0/16 via {{ sdn_nat_address.rsplit('.', 1)[0] }}.{{ 100 + r.second_octet }} || true
+                  post-up   ip route add 10.{{ r['second_octet'] }}.0.0/16 via {{ sdn_nat_address.rsplit('.', 1)[0] }}.{{ 100 + r['second_octet'] }} dev {{ sdn_nat_vnet }} || true
+                  post-down ip route del 10.{{ r['second_octet'] }}.0.0/16 via {{ sdn_nat_address.rsplit('.', 1)[0] }}.{{ 100 + r['second_octet'] }} || true
               {% endfor %}
           register: __nat_stanza
         # yamllint enable rule:line-length
@@ -373,7 +373,7 @@
           failed_when: __ifquery_after.rc not in [0, 1]
         - name: "Assert the range routes are actually present"
           ansible.builtin.shell:
-            cmd: "set -o pipefail; ip route show | grep -q '^10.{{ item.second_octet }}.0.0/16 .* dev {{ sdn_nat_vnet }}'"
+            cmd: "set -o pipefail; ip route show | grep -q '^10.{{ item['second_octet'] }}.0.0/16 .* dev {{ sdn_nat_vnet }}'"
             executable: /bin/bash
           loop: "{{ sdn_range_routes }}"
           register: __routes
@@ -382,28 +382,28 @@
         - name: "Report any missing range routes"
           ansible.builtin.debug:
             msg: >-
-              Range route 10.{{ item.item.second_octet }}.0.0/16 via {{ sdn_nat_vnet }}
-              is {{ 'PRESENT' if item.rc == 0 else 'MISSING — bring the interface up, or ifup ' ~ sdn_nat_vnet }}
+              Range route 10.{{ item['item']['second_octet'] }}.0.0/16 via {{ sdn_nat_vnet }}
+              is {{ 'PRESENT' if item['rc'] == 0 else 'MISSING — bring the interface up, or ifup ' ~ sdn_nat_vnet }}
           loop: "{{ __routes.results }}"
-          loop_control: { label: "10.{{ item.item.second_octet }}.0.0/16" }
+          loop_control: { label: "10.{{ item['item']['second_octet'] }}.0.0/16" }
       rescue:
         - name: "Rescue: restore the bytes of every edited file"
           ansible.builtin.copy:
-            content: "{{ item.value.b64 | b64decode }}"
-            dest: "{{ item.key }}"
-            owner: "{{ item.value.owner }}"
-            group: "{{ item.value.group }}"
-            mode: "{{ item.value.mode }}"
+            content: "{{ item['value']['b64'] | b64decode }}"
+            dest: "{{ item['key'] }}"
+            owner: "{{ item['value']['owner'] }}"
+            group: "{{ item['value']['group'] }}"
+            mode: "{{ item['value']['mode'] }}"
           loop: "{{ __prior_sdn_files | dict2items | selectattr('value.existed') | list }}"
-          loop_control: { label: "{{ item.key }} <- {{ item.value.sha256[:12] }}…" }
+          loop_control: { label: "{{ item['key'] }} <- {{ item['value']['sha256'][:12] }}…" }
           register: __sdnf_restore
           failed_when: false
         - name: "Rescue: delete files that did NOT exist before this run"
           ansible.builtin.file:
-            path: "{{ item.key }}"
+            path: "{{ item['key'] }}"
             state: absent
           loop: "{{ __prior_sdn_files | dict2items | rejectattr('value.existed') | list }}"
-          loop_control: { label: "{{ item.key }} <- back to ABSENT" }
+          loop_control: { label: "{{ item['key'] }} <- back to ABSENT" }
           register: __sdnf_restore_absent
           failed_when: false
         - name: "Rescue: restart dnsmasq against the restored config"
@@ -414,10 +414,10 @@
           failed_when: false
         - name: "Rescue verify: re-stat every edited file"
           ansible.builtin.stat:
-            path: "{{ item.key }}"
+            path: "{{ item['key'] }}"
             checksum_algorithm: sha256
           loop: "{{ __prior_sdn_files | dict2items }}"
-          loop_control: { label: "{{ item.key }}" }
+          loop_control: { label: "{{ item['key'] }}" }
           register: __sdnf_restore_stat
           check_mode: false
           failed_when: false
@@ -436,14 +436,14 @@
           ansible.builtin.set_fact:
             __sdnf_verdicts: >-
               {{ __sdnf_verdicts | default([]) + [{
-                   'file': item.item.key,
-                   'was': ('sha256 ' ~ item.item.value.sha256[:12] ~ '…') if item.item.value.existed else 'ABSENT',
-                   'now': ('sha256 ' ~ (item.stat.checksum | default('?'))[:12] ~ '…') if item.stat.exists | default(false) else 'ABSENT',
-                   'ok': (item.stat.exists | default(false)) == item.item.value.existed
-                         and ((item.stat.checksum | default('')) == item.item.value.sha256
-                              if item.item.value.existed else true) }] }}
+                   'file': item["item"]["key"],
+                   'was': ('sha256 ' ~ item["item"]["value"]["sha256"][:12] ~ '…') if item["item"]["value"]["existed"] else 'ABSENT',
+                   'now': ('sha256 ' ~ (item["stat"]["checksum"] | default('?'))[:12] ~ '…') if item["stat"]["exists"] | default(false) else 'ABSENT',
+                   'ok': (item["stat"]["exists"] | default(false)) == item["item"]["value"]["existed"]
+                         and ((item['stat']['checksum'] | default('')) == item['item']['value']['sha256']
+                              if item['item']['value']['existed'] else true) }] }}
           loop: "{{ __sdnf_restore_stat.results }}"
-          loop_control: { label: "{{ item.item.key }}" }
+          loop_control: { label: "{{ item['item']['key'] }}" }
         - name: "Rescue verify: the rollback verdict"
           ansible.builtin.set_fact:
             __sdnf_verdict: >-
@@ -461,7 +461,7 @@
                                "NOT VERIFIED — at least one item does NOT match what was captured, so the host NAT/dnsmasq
                                 configuration is in an UNKNOWN state and needs manual inspection." }}
               {% for v in __sdnf_verdicts %}
-                  {{ 'OK  ' if v.ok else 'FAIL' }} {{ v.file }}: captured={{ v.was }} now={{ v.now }}
+                  {{ 'OK  ' if v['ok'] else 'FAIL' }} {{ v['file'] }}: captured={{ v['was'] }} now={{ v['now'] }}
               {% endfor %}
                   {{ 'OK  ' if (__dnsmasq_after.stdout | default('')) == (__dnsmasq_prior.stdout | default('!')) else 'FAIL' }} dnsmasq: captured={{ __dnsmasq_prior.stdout | default('?') }} now={{ __dnsmasq_after.stdout | default('?') }}
                   dnsmasq restart against the restored config: {{ 'ok' if not (__dnsmasq_restore.failed | default(true)) else 'FAILED — dnsmasq will not start on the RESTORED config; this needs a human' }}

@@ -42,10 +42,19 @@
   vars:
     __cd_root: "{{ cluster_discover_inventory_dir }}{{ '/discovered' if cluster_discover_write == 'additional' else '' }}"
 
+- name: "render | Read the identity of the user who writes the records"
+  ansible.builtin.setup:
+    gather_subset: ["!all", "!min", "user"]
+  delegate_to: "{{ cluster_discover_delegate_to }}"
+  delegate_facts: true
+  register: __cd_delegate_facts
+
 - name: "render | Ensure the record directories exist"
   ansible.builtin.file:
     path: "{{ __cd_dest | dirname }}"
     state: directory
+    owner: "{{ cluster_discover_record_owner }}"
+    group: "{{ cluster_discover_record_group }}"
     mode: "0755"
   loop:
     - "{{ __cd_node_dest }}"
@@ -59,6 +68,8 @@
   ansible.builtin.template:
     src: node.yml.j2
     dest: "{{ __cd_node_dest }}"
+    owner: "{{ cluster_discover_record_owner }}"
+    group: "{{ cluster_discover_record_group }}"
     mode: "0644"
     backup: "{{ cluster_discover_backup | bool }}"
   delegate_to: "{{ cluster_discover_delegate_to }}"
@@ -67,6 +78,8 @@
   ansible.builtin.template:
     src: cluster.yml.j2
     dest: "{{ __cd_cluster_dest }}"
+    owner: "{{ cluster_discover_record_owner }}"
+    group: "{{ cluster_discover_record_group }}"
     mode: "0644"
     backup: "{{ cluster_discover_backup | bool }}"
   run_once: true

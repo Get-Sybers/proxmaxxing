@@ -57,7 +57,7 @@
       loop: "{{ cluster_plugin_packer_list }}"
       loop_control:
         loop_var: plugin
-        label: "{{ plugin.source }} v{{ plugin.version }}"
+        label: "{{ plugin['source'] }} v{{ plugin['version'] }}"
   rescue:
     - name: "Report the pre-state captured before any change"
       ansible.builtin.debug:
@@ -77,6 +77,9 @@
     state: directory
     owner: "{{ cluster_plugin_packer_owner }}"
     group: "{{ cluster_plugin_packer_group }}"
+    # Directories traversable, files keep their own execute bit (the plugin
+    # binaries), nothing group- or world-writable.
+    mode: "u=rwX,g=rX,o=rX"
     recurse: true
   loop: "{{ cluster_plugin_packer_list | map(attribute='source')
             | map('regex_replace', '/.*$', '') | unique | list }}"
@@ -92,11 +95,11 @@
   ansible.builtin.assert:
     that: >-
       __pp_post_listing.stdout is
-      search((cluster_plugin_packer_root ~ '/' ~ item.source ~
-              '/packer-plugin-' ~ (item.source | basename) ~
-              '_v' ~ item.version ~ '_') | regex_escape)
+      search((cluster_plugin_packer_root ~ '/' ~ item['source'] ~
+              '/packer-plugin-' ~ (item["source"] | basename) ~
+              '_v' ~ item["version"] ~ '_') | regex_escape)
     fail_msg: >-
-      {{ item.source }} v{{ item.version }} does not appear in
+      {{ item['source'] }} v{{ item['version'] }} does not appear in
       `packer plugins installed` output from
       PACKER_PLUGIN_PATH={{ cluster_plugin_packer_root }}. The install
       reported success but packer cannot resolve the plugin — the next
@@ -105,7 +108,7 @@
     quiet: true
   loop: "{{ cluster_plugin_packer_list }}"
   loop_control:
-    label: "{{ item.source }} v{{ item.version }}"
+    label: "{{ item['source'] }} v{{ item['version'] }}"
   when: not ansible_check_mode
 - name: "Re-scan the plugin root"
   ansible.builtin.find:

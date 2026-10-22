@@ -191,7 +191,7 @@
               {%- for r in __pb_record_items -%}
               {%-   for f in ['proxmoxPassword', 'proxmoxTokenSecret'] -%}
               {%-     if (r[f] | default('')) | length > 0 -%}
-              {%-       set _ = out.append({'id': r.id, 'userID': r.userID,
+              {%-       set _ = out.append({'id': r['id'], 'userID': r['userID'],
                                             'field': f, 'ct': r[f]}) -%}
               {%-     endif -%}
               {%-   endfor -%}
@@ -229,7 +229,7 @@
           ansible.builtin.include_tasks: tasks/dek-capture-one.yml
           loop: "{{ __dek_targets }}"
           loop_control:
-            label: "{{ item.userID }}.{{ item.field }}"
+            label: "{{ item['userID'] }}.{{ item['field'] }}"
         - name: "Report the captured set (counts, never plaintexts)"
           ansible.builtin.debug:
             msg: >-
@@ -313,7 +313,7 @@
           ansible.builtin.include_tasks: tasks/dek-restore-one.yml
           loop: "{{ __dek_capture | default([]) }}"
           loop_control:
-            label: "{{ item.userID }}.{{ item.field }}"
+            label: "{{ item['userID'] }}.{{ item['field'] }}"
         - name: "Re-encrypt any gs_infra_credentials records (#165 Phase B data)"
           ansible.builtin.include_role:
             name: get_sybers.cluster.cluster_pb_store
@@ -368,7 +368,7 @@
           ansible.builtin.include_tasks: tasks/dek-revert-field-one.yml
           loop: "{{ __dek_capture | default([]) }}"
           loop_control:
-            label: "{{ item.userID }}.{{ item.field }}"
+            label: "{{ item['userID'] }}.{{ item['field'] }}"
           when: (__dek_capture | default([]) | length) > 0
           ignore_errors: true
         # best-effort rescue revert: one record failing must not abort reverting the rest.
@@ -377,12 +377,12 @@
             name: get_sybers.cluster.cluster_pb_store
             tasks_from: record_update
           vars:
-            cluster_pb_store_record_id: "{{ item.id }}"
-            cluster_pb_store_record_value: "{{ item.ct }}"
+            cluster_pb_store_record_id: "{{ item['id'] }}"
+            cluster_pb_store_record_value: "{{ item['ct'] }}"
             cluster_pb_store_record_note: "reverted to pre-rotation ciphertext (dek-rotate rescue)"
           loop: "{{ __dek_records_captured | default([]) }}"
           loop_control:
-            label: "gs_infra_credentials record {{ item.id }}"
+            label: "gs_infra_credentials record {{ item['id'] }}"
           when: (__dek_records_captured | default([]) | length) > 0
           ignore_errors: true
         # best-effort rescue restore in the failure path.

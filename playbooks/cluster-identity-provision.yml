@@ -48,14 +48,14 @@
           X-API-KEY: "{{ cluster_secrets_ludus_root_api_key }}"
         body_format: json
         body:
-          name: "{{ item.name }}"
-          userID: "{{ item.user_id }}"
-          email: "{{ item.email }}"
+          name: "{{ item['name'] }}"
+          userID: "{{ item['user_id'] }}"
+          email: "{{ item['email'] }}"
           isAdmin: true
         validate_certs: "{{ identity_validate_certs }}"
         status_code: [201]
       loop: "{{ identity_seats }}"
-      when: item.user_id not in __existing_user_ids
+      when: item['user_id'] not in __existing_user_ids
       register: __identity_create
       no_log: true
       changed_when: true

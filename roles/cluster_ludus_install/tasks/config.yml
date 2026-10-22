@@ -35,8 +35,8 @@
 - name: "config | Reconcile each managed key, preserving every other line"
   ansible.builtin.lineinfile:
     path: "{{ cluster_ludus_install_root }}/config.yml"
-    regexp: "^{{ item.key | regex_escape }}:"
-    line: "{{ item.key }}: {{ item.value }}"
+    regexp: "^{{ item['key'] | regex_escape }}:"
+    line: "{{ item['key'] }}: {{ item['value'] }}"
     insertafter: EOF
     backup: true
     owner: root
@@ -44,7 +44,7 @@
     mode: "0644"
   loop: "{{ __clc_keys }}"
   loop_control:
-    label: "{{ item.key }}"
+    label: "{{ item['key'] }}"
   notify: "Restart ludus services"
 
 - name: "config | Re-read config.yml to verify the result on disk"
@@ -73,14 +73,14 @@
 - name: "config | Every managed key is present with the enforced value on disk"
   ansible.builtin.assert:
     that: >-
-      __clc_after is search('(?m)^' ~ (item.key | regex_escape) ~ ':\s*'
-                            ~ (item.value | regex_escape) ~ '\s*$')
+      __clc_after is search('(?m)^' ~ (item['key'] | regex_escape) ~ ':\s*'
+                            ~ (item['value'] | regex_escape) ~ '\s*$')
     fail_msg: >-
-      {{ item.key }} is not '{{ item.value }}' in config.yml after reconcile.
+      {{ item['key'] }} is not '{{ item['value'] }}' in config.yml after reconcile.
     quiet: true
   loop: "{{ __clc_keys }}"
   loop_control:
-    label: "{{ item.key }}"
+    label: "{{ item['key'] }}"
   # Under --check lineinfile only simulates, so the re-read still shows the
   # pre-write file; skip the on-disk assertion rather than false-fail.
   when: not ansible_check_mode

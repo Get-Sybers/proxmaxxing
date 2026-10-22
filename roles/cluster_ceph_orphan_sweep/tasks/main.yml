@@ -63,10 +63,10 @@
          | selectattr('type', 'in', ['qemu', 'lxc'])
          | list }}
 - name: "Read every live guest config (VM /qemu/, CT /lxc/) for the referenced-disk set"
-  ansible.builtin.command: "pvesh get /nodes/{{ item.node }}/{{ item.type }}/{{ item.vmid }}/config --output-format json"
+  ansible.builtin.command: "pvesh get /nodes/{{ item['node'] }}/{{ item['type'] }}/{{ item['vmid'] }}/config --output-format json"
   loop: "{{ __cos_live }}"
   loop_control:
-    label: "{{ item.type }} {{ item.vmid }} on {{ item.node }}"
+    label: "{{ item['type'] }} {{ item['vmid'] }} on {{ item['node'] }}"
   register: __cos_cfgs
   changed_when: false
   check_mode: false

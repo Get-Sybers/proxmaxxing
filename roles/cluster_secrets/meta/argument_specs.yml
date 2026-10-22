@@ -1,5 +1,8 @@
 ---
 argument_specs:
+  main:
+    short_description: "No default entry point: refuses a bare include and names the tasks_from entry points."
+    options: {}
   get:
     short_description: "Fetch a secret from the configured backend and return it as cluster_secrets_result."
     description:

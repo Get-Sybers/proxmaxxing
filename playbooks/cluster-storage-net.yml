@@ -14,13 +14,13 @@
       ansible.builtin.shell:
         cmd: |
           set -o pipefail
-          a=$(ip -o -4 addr show dev {{ item.iface }} 2>/dev/null | awk '{print $4}' | head -1)
-          m=$(cat /sys/class/net/{{ item.iface }}/mtu 2>/dev/null)
-          o=$(cat /sys/class/net/{{ item.iface }}/operstate 2>/dev/null)
+          a=$(ip -o -4 addr show dev {{ item['iface'] }} 2>/dev/null | awk '{print $4}' | head -1)
+          m=$(cat /sys/class/net/{{ item['iface'] }}/mtu 2>/dev/null)
+          o=$(cat /sys/class/net/{{ item['iface'] }}/operstate 2>/dev/null)
           printf '%s|%s|%s' "${a:-none}" "${m:-none}" "${o:-absent}"
         executable: /bin/bash
       loop: "{{ __links }}"
-      loop_control: { label: "{{ item.iface }}" }
+      loop_control: { label: "{{ item['iface'] }}" }
       register: __link_prior
       changed_when: false
       check_mode: false
@@ -29,18 +29,18 @@
       ansible.builtin.shell:
         cmd: |
           set -o pipefail
-          for f in {{ item.ethtool_off }}; do
+          for f in {{ item['ethtool_off'] }}; do
             case "$f" in
               tso) key="tcp-segmentation-offload" ;;
               gso) key="generic-segmentation-offload" ;;
               gro) key="generic-receive-offload" ;;
               *)   key="$f" ;;
             esac
-            printf '%s=%s\n' "$f" "$(ethtool -k {{ item.iface }} 2>/dev/null | awk -v k="$key:" '$1==k {print $2}')"
+            printf '%s=%s\n' "$f" "$(ethtool -k {{ item['iface'] }} 2>/dev/null | awk -v k="$key:" '$1==k {print $2}')"
           done
         executable: /bin/bash
       loop: "{{ __links | selectattr('ethtool_off', 'defined') | list }}"
-      loop_control: { label: "{{ item.iface }} {{ item.ethtool_off }}" }
+      loop_control: { label: "{{ item['iface'] }} {{ item['ethtool_off'] }}" }
       register: __offload_prior
       changed_when: false
       check_mode: false
@@ -54,10 +54,10 @@
       check_mode: false
     - name: "Fact-find: slurp the ones that exist"
       ansible.builtin.slurp:
-        src: "{{ item.item }}"
+        src: "{{ item['item'] }}"
       loop: "{{ __sn_stat.results }}"
-      loop_control: { label: "{{ item.item }}" }
-      when: item.stat.exists
+      loop_control: { label: "{{ item['item'] }}" }
+      when: item['stat']['exists']
       register: __sn_slurp
       check_mode: false
     - name: "Fact-find: is thunderbolt_net already loaded?"
@@ -85,39 +85,39 @@
     - name: "Fact-find: index the captured prior state per item"
       ansible.builtin.set_fact:
         __prior_links: >-
-          {{ __prior_links | default({}) | combine({ item.item.iface: {
-               'addr': item.stdout.split('|')[0],
-               'mtu': item.stdout.split('|')[1],
-               'operstate': item.stdout.split('|')[2] | default('absent') } }) }}
+          {{ __prior_links | default({}) | combine({ item['item']['iface']: {
+               'addr': item["stdout"].split('|')[0],
+               'mtu': item["stdout"].split('|')[1],
+               'operstate': item["stdout"].split('|')[2] | default('absent') } }) }}
       loop: "{{ __link_prior.results | default([]) }}"
-      loop_control: { label: "{{ item.item.iface }}" }
+      loop_control: { label: "{{ item['item']['iface'] }}" }
     - name: "Fact-find: index the captured offload state per interface+feature"
       ansible.builtin.set_fact:
         __prior_offloads: >-
-          {{ __prior_offloads | default({}) | combine({ item.0.item.iface ~ '/' ~ (item.1.split('=')[0]):
-               item.1.split('=')[1] | default('unknown') }) }}
+          {{ __prior_offloads | default({}) | combine({ item[0]['item']['iface'] ~ '/' ~ (item[1].split('=')[0]):
+               item[1].split('=')[1] | default('unknown') }) }}
       loop: "{{ __offload_prior.results | default([]) | subelements('stdout_lines', skip_missing=True) }}"
-      loop_control: { label: "{{ item.0.item.iface }} {{ item.1 }}" }
+      loop_control: { label: "{{ item[0]['item']['iface'] }} {{ item[1] }}" }
     - name: "Fact-find: index the captured file state per file"
       ansible.builtin.set_fact:
         __prior_sn_files: >-
-          {{ __prior_sn_files | default({}) | combine({ item.0.item: {
-               'existed': item.0.stat.exists,
-               'mode': item.0.stat.mode | default('0644'),
-               'sha256': item.0.stat.checksum | default(''),
-               'b64': item.1.content | default(''),
-               'captured': item.1.content is defined } }) }}
+          {{ __prior_sn_files | default({}) | combine({ item[0]['item']: {
+               'existed': item[0]["stat"]["exists"],
+               'mode': item[0]["stat"]["mode"] | default('0644'),
+               'sha256': item[0]["stat"]["checksum"] | default(''),
+               'b64': item[1]["content"] | default(''),
+               'captured': item[1]["content"] is defined } }) }}
       loop: "{{ __sn_stat.results | zip(__sn_slurp.results) | list }}"
-      loop_control: { label: "{{ item.0.item }}" }
+      loop_control: { label: "{{ item[0]['item'] }}" }
     - name: "Fact-find: report the prior state a rescue would put back"
       ansible.builtin.debug:
         msg: |-
           {{ inventory_hostname }} — state captured BEFORE any change:
           links (only the ones THIS RUN brings up are ever torn down again):
           {% for l in __links %}
-            {{ l.iface }}: addr {{ __prior_links[l.iface].addr }}, mtu {{ __prior_links[l.iface].mtu }},
-                           operstate {{ __prior_links[l.iface].operstate }}  -> target {{ l.address }} mtu {{ l.mtu }}
-                           ({{ 'ALREADY at target — rescue will NOT touch it' if __prior_links[l.iface].addr == l.address
+            {{ l['iface'] }}: addr {{ __prior_links[l.iface].addr }}, mtu {{ __prior_links[l.iface].mtu }},
+                           operstate {{ __prior_links[l.iface].operstate }}  -> target {{ l['address'] }} mtu {{ l['mtu'] }}
+                           ({{ 'ALREADY at target — rescue will NOT touch it' if __prior_links[l.iface].addr == l['address']
                                else 'this run will bring it up; rescue can tear it back down' }})
           {% endfor %}
           offload features (restored per feature):
@@ -126,7 +126,7 @@
           {% endfor %}
           files (restored byte-for-byte):
           {% for n, f in __prior_sn_files.items() %}
-            {{ n }}: {{ ('present, ' ~ f.mode ~ ', sha256 ' ~ f.sha256[:12] ~ '…') if f.existed else 'ABSENT (rescue would delete it again)' }}
+            {{ n }}: {{ ('present, ' ~ f['mode'] ~ ', sha256 ' ~ f['sha256'][:12] ~ '…') if f['existed'] else 'ABSENT (rescue would delete it again)' }}
           {% endfor %}
           thunderbolt_net: {{ 'loaded' if 'loaded' in __tbmod_prior.stdout else 'NOT loaded' }} (never unloaded — see the header)
           Ansible control path egresses: {{ __ctrl_path.stdout_lines[0] | default('?') }}
@@ -210,17 +210,17 @@
           ansible.builtin.shell:
             cmd: |
               set -o pipefail
-              cur=$(ip -o -4 addr show dev {{ item.iface }} 2>/dev/null | awk '{print $4}')
-              if [ "$cur" = "{{ item.address }}" ]; then
+              cur=$(ip -o -4 addr show dev {{ item['iface'] }} 2>/dev/null | awk '{print $4}')
+              if [ "$cur" = "{{ item['address'] }}" ]; then
                 echo "already up"
               else
-                ifup {{ item.iface }} 2>&1 || ip addr add {{ item.address }} dev {{ item.iface }} 2>/dev/null
-                ip link set {{ item.iface }} mtu {{ item.mtu }} up 2>/dev/null
+                ifup {{ item['iface'] }} 2>&1 || ip addr add {{ item['address'] }} dev {{ item['iface'] }} 2>/dev/null
+                ip link set {{ item['iface'] }} mtu {{ item['mtu'] }} up 2>/dev/null
                 echo "brought up"
               fi
             executable: /bin/bash
           loop: "{{ __links }}"
-          loop_control: { label: "{{ item.iface }} {{ item.address }}" }
+          loop_control: { label: "{{ item['iface'] }} {{ item['address'] }}" }
           register: __ifup
           changed_when: "'brought up' in __ifup.stdout"
         - name: "Apply required-off offload features"
@@ -228,39 +228,39 @@
             cmd: |
               set -o pipefail
               changed=0
-              for f in {{ item.ethtool_off }}; do
+              for f in {{ item['ethtool_off'] }}; do
                 case "$f" in
                   tso) key="tcp-segmentation-offload" ;;
                   gso) key="generic-segmentation-offload" ;;
                   gro) key="generic-receive-offload" ;;
                   *)   key="$f" ;;
                 esac
-                line=$(ethtool -k {{ item.iface }} | awk -v k="$key:" '$1==k {print $0}')
+                line=$(ethtool -k {{ item['iface'] }} | awk -v k="$key:" '$1==k {print $0}')
                 cur=$(echo "$line" | awk '{print $2}')
                 if [ "$cur" != "off" ]; then
                   if echo "$line" | grep -q '\[fixed\]'; then
-                    echo "ERROR: $f is fixed-on on {{ item.iface }} — required-off feature cannot be disabled" >&2
+                    echo "ERROR: $f is fixed-on on {{ item['iface'] }} — required-off feature cannot be disabled" >&2
                     exit 1
                   fi
-                  ethtool -K {{ item.iface }} $f off; changed=1
+                  ethtool -K {{ item['iface'] }} $f off; changed=1
                 fi
               done
               [ "$changed" -eq 1 ] && echo "applied" || echo "already off"
             executable: /bin/bash
           loop: "{{ __links | selectattr('ethtool_off', 'defined') | list }}"
-          loop_control: { label: "{{ item.iface }} -{{ item.ethtool_off }}" }
+          loop_control: { label: "{{ item['iface'] }} -{{ item['ethtool_off'] }}" }
           register: __ethtool
           changed_when: "'applied' in __ethtool.stdout"
         - name: "Post-check: re-read each link's address and MTU"
           ansible.builtin.shell:
             cmd: |
               set -o pipefail
-              a=$(ip -o -4 addr show dev {{ item.iface }} 2>/dev/null | awk '{print $4}' | head -1)
-              m=$(cat /sys/class/net/{{ item.iface }}/mtu 2>/dev/null)
+              a=$(ip -o -4 addr show dev {{ item['iface'] }} 2>/dev/null | awk '{print $4}' | head -1)
+              m=$(cat /sys/class/net/{{ item['iface'] }}/mtu 2>/dev/null)
               printf '%s|%s' "${a:-none}" "${m:-none}"
             executable: /bin/bash
           loop: "{{ __links }}"
-          loop_control: { label: "{{ item.iface }}" }
+          loop_control: { label: "{{ item['iface'] }}" }
           register: __link_after
           changed_when: false
         - name: "POST-CHECK: every link carries its target address at its target MTU"
@@ -274,40 +274,40 @@
             fail_msg: |-
               Storage links are NOT in the intended state after configuring them.
               {% for l in __links %}
-                {{ l.iface }}: want {{ l.address }}|{{ l.mtu }}, kernel reports {{ __link_after.results[loop.index0].stdout }}
+                {{ l['iface'] }}: want {{ l['address'] }}|{{ l['mtu'] }}, kernel reports {{ __link_after.results[loop.index0].stdout }}
               {% endfor %}
         - name: "Test each link to its peer"
-          ansible.builtin.command: "ping -c2 -W2 -I {{ item.iface }} {{ item.peer }}"
+          ansible.builtin.command: "ping -c2 -W2 -I {{ item['iface'] }} {{ item['peer'] }}"
           loop: "{{ __links }}"
-          loop_control: { label: "{{ item.iface }} -> {{ item.peer }} ({{ item.role }})" }
+          loop_control: { label: "{{ item['iface'] }} -> {{ item['peer'] }} ({{ item['role'] }})" }
           register: __ping
           changed_when: false
           failed_when: false
         - name: "Report link status"
           ansible.builtin.debug:
             msg: >-
-              {{ inventory_hostname }} {{ item.item.iface }} ({{ item.item.role }})
-              -> {{ item.item.peer }}: {{ 'UP' if item.rc == 0 else 'NO LINK (cable not connected?)' }}
+              {{ inventory_hostname }} {{ item['item']['iface'] }} ({{ item['item']['role'] }})
+              -> {{ item['item']['peer'] }}: {{ 'UP' if item['rc'] == 0 else 'NO LINK (cable not connected?)' }}
           loop: "{{ __ping.results }}"
-          loop_control: { label: "{{ item.item.iface }}" }
+          loop_control: { label: "{{ item['item']['iface'] }}" }
       rescue:
         - name: "Rescue: restore the bytes of every managed file that EXISTED"
           ansible.builtin.copy:
-            content: "{{ item.value.b64 | b64decode }}"
-            dest: "{{ item.key }}"
+            content: "{{ item['value']['b64'] | b64decode }}"
+            dest: "{{ item['key'] }}"
             owner: root
             group: root
-            mode: "{{ item.value.mode }}"
+            mode: "{{ item['value']['mode'] }}"
           loop: "{{ __prior_sn_files | dict2items | selectattr('value.existed') | list }}"
-          loop_control: { label: "{{ item.key }} <- {{ item.value.sha256[:12] }}…" }
+          loop_control: { label: "{{ item['key'] }} <- {{ item['value']['sha256'][:12] }}…" }
           register: __sn_restore_present
           failed_when: false
         - name: "Rescue: delete every managed file that did NOT exist"
           ansible.builtin.file:
-            path: "{{ item.key }}"
+            path: "{{ item['key'] }}"
             state: absent
           loop: "{{ __prior_sn_files | dict2items | rejectattr('value.existed') | list }}"
-          loop_control: { label: "{{ item.key }} <- back to ABSENT" }
+          loop_control: { label: "{{ item['key'] }} <- back to ABSENT" }
           register: __sn_restore_absent
           failed_when: false
         - name: "Rescue: reload udev against the restored rules"
@@ -317,10 +317,10 @@
           failed_when: false
         - name: "Rescue: restore each offload feature to its own captured state"
           ansible.builtin.command:
-            argv: [ethtool, -K, "{{ item.key.split('/')[0] }}", "{{ item.key.split('/')[1] }}", "{{ item.value }}"]
+            argv: [ethtool, -K, "{{ item['key'].split('/')[0] }}", "{{ item['key'].split('/')[1] }}", "{{ item['value'] }}"]
           loop: "{{ (__prior_offloads | default({})) | dict2items }}"
-          loop_control: { label: "{{ item.key }} <- {{ item.value }}" }
-          when: item.value in ['on', 'off']
+          loop_control: { label: "{{ item['key'] }} <- {{ item['value'] }}" }
+          when: item['value'] in ['on', 'off']
           register: __sn_restore_offload
           changed_when: true
           failed_when: false
@@ -328,30 +328,30 @@
           ansible.builtin.shell:
             cmd: |
               set -o pipefail
-              ip addr del {{ item.address }} dev {{ item.iface }} 2>/dev/null || true
+              ip addr del {{ item['address'] }} dev {{ item['iface'] }} 2>/dev/null || true
               {% if __prior_links[item.iface].addr not in ['none', ''] %}
-              ip addr add {{ __prior_links[item.iface].addr }} dev {{ item.iface }} 2>/dev/null || true
+              ip addr add {{ __prior_links[item.iface].addr }} dev {{ item['iface'] }} 2>/dev/null || true
               {% endif %}
               {% if __prior_links[item.iface].mtu not in ['none', ''] %}
-              ip link set dev {{ item.iface }} mtu {{ __prior_links[item.iface].mtu }} 2>/dev/null || true
+              ip link set dev {{ item['iface'] }} mtu {{ __prior_links[item.iface].mtu }} 2>/dev/null || true
               {% endif %}
               {% if __prior_links[item.iface].operstate in ['down'] %}
-              ip link set dev {{ item.iface }} down 2>/dev/null || true
+              ip link set dev {{ item['iface'] }} down 2>/dev/null || true
               {% endif %}
               echo restored
             executable: /bin/bash
           loop: "{{ __links }}"
-          loop_control: { label: "{{ item.iface }} <- {{ __prior_links[item.iface].addr }} mtu {{ __prior_links[item.iface].mtu }}" }
-          when: __prior_links[item.iface].addr != item.address
+          loop_control: { label: "{{ item['iface'] }} <- {{ __prior_links[item.iface].addr }} mtu {{ __prior_links[item.iface].mtu }}" }
+          when: __prior_links[item.iface].addr != item['address']
           register: __sn_restore_links
           changed_when: true
           failed_when: false
         - name: "Rescue verify: re-stat every managed file"
           ansible.builtin.stat:
-            path: "{{ item.key }}"
+            path: "{{ item['key'] }}"
             checksum_algorithm: sha256
           loop: "{{ __prior_sn_files | dict2items }}"
-          loop_control: { label: "{{ item.key }}" }
+          loop_control: { label: "{{ item['key'] }}" }
           register: __sn_restore_stat
           check_mode: false
           failed_when: false
@@ -359,13 +359,13 @@
           ansible.builtin.shell:
             cmd: |
               set -o pipefail
-              a=$(ip -o -4 addr show dev {{ item.iface }} 2>/dev/null | awk '{print $4}' | head -1)
-              m=$(cat /sys/class/net/{{ item.iface }}/mtu 2>/dev/null)
-              o=$(cat /sys/class/net/{{ item.iface }}/operstate 2>/dev/null)
+              a=$(ip -o -4 addr show dev {{ item['iface'] }} 2>/dev/null | awk '{print $4}' | head -1)
+              m=$(cat /sys/class/net/{{ item['iface'] }}/mtu 2>/dev/null)
+              o=$(cat /sys/class/net/{{ item['iface'] }}/operstate 2>/dev/null)
               printf '%s|%s|%s' "${a:-none}" "${m:-none}" "${o:-absent}"
             executable: /bin/bash
           loop: "{{ __links }}"
-          loop_control: { label: "{{ item.iface }}" }
+          loop_control: { label: "{{ item['iface'] }}" }
           register: __sn_link_after
           changed_when: false
           failed_when: false
@@ -373,27 +373,27 @@
           ansible.builtin.set_fact:
             __sn_file_verdicts: >-
               {{ __sn_file_verdicts | default([]) + [{
-                   'file': item.item.key,
-                   'was': ('sha256 ' ~ item.item.value.sha256[:12] ~ '…') if item.item.value.existed else 'ABSENT',
-                   'now': ('sha256 ' ~ (item.stat.checksum | default('?'))[:12] ~ '…') if item.stat.exists | default(false) else 'ABSENT',
-                   'ok': (item.stat.exists | default(false)) == item.item.value.existed
-                         and ((item.stat.checksum | default('')) == item.item.value.sha256
-                              if item.item.value.existed else true) }] }}
+                   'file': item["item"]["key"],
+                   'was': ('sha256 ' ~ item["item"]["value"]["sha256"][:12] ~ '…') if item["item"]["value"]["existed"] else 'ABSENT',
+                   'now': ('sha256 ' ~ (item["stat"]["checksum"] | default('?'))[:12] ~ '…') if item["stat"]["exists"] | default(false) else 'ABSENT',
+                   'ok': (item["stat"]["exists"] | default(false)) == item["item"]["value"]["existed"]
+                         and ((item['stat']['checksum'] | default('')) == item['item']['value']['sha256']
+                              if item['item']['value']['existed'] else true) }] }}
           loop: "{{ __sn_restore_stat.results }}"
-          loop_control: { label: "{{ item.item.key }}" }
+          loop_control: { label: "{{ item['item']['key'] }}" }
         - name: "Rescue verify: compare, link by link"
           ansible.builtin.set_fact:
             __sn_link_verdicts: >-
               {{ __sn_link_verdicts | default([]) + [{
-                   'iface': item.item.iface,
+                   'iface': item["item"]["iface"],
                    'was': __prior_links[item.item.iface].addr ~ ' mtu ' ~ __prior_links[item.item.iface].mtu,
-                   'now': (item.stdout | default('?|?|?')).split('|')[0] ~ ' mtu ' ~ (item.stdout | default('?|?|?')).split('|')[1],
-                   'touched': __prior_links[item.item.iface].addr != item.item.address
-                              or __prior_links[item.item.iface].mtu | string != item.item.mtu | string,
-                   'ok': (item.stdout | default('')).split('|')[0] == __prior_links[item.item.iface].addr
-                         and (item.stdout | default('|')).split('|')[1] == __prior_links[item.item.iface].mtu | string }] }}
+                   'now': (item["stdout"] | default('?|?|?')).split('|')[0] ~ ' mtu ' ~ (item["stdout"] | default('?|?|?')).split('|')[1],
+                   'touched': __prior_links[item.item.iface].addr != item["item"]["address"]
+                              or __prior_links[item.item.iface].mtu | string != item['item']['mtu'] | string,
+                   'ok': (item["stdout"] | default('')).split('|')[0] == __prior_links[item.item.iface].addr
+                         and (item['stdout'] | default('|')).split('|')[1] == __prior_links[item.item.iface].mtu | string }] }}
           loop: "{{ __sn_link_after.results }}"
-          loop_control: { label: "{{ item.item.iface }}" }
+          loop_control: { label: "{{ item['item']['iface'] }}" }
         - name: "Rescue verify: the rollback verdict"
           ansible.builtin.set_fact:
             __sn_verdict: >-
@@ -411,11 +411,11 @@
                                "NOT VERIFIED — at least one item does NOT match what was captured, so the storage network on
                                 this node is in an UNKNOWN state and needs manual inspection." }}
               {% for v in __sn_file_verdicts %}
-                  {{ 'OK  ' if v.ok else 'FAIL' }} {{ v.file }}: captured={{ v.was }} now={{ v.now }}
+                  {{ 'OK  ' if v['ok'] else 'FAIL' }} {{ v['file'] }}: captured={{ v['was'] }} now={{ v['now'] }}
               {% endfor %}
               {% for v in __sn_link_verdicts %}
-                  {{ 'OK  ' if v.ok else 'FAIL' }} {{ v.iface }}: captured={{ v.was }} now={{ v.now }}
-                       ({{ 'this run brought it up, so the rescue tore it back down' if v.touched
+                  {{ 'OK  ' if v['ok'] else 'FAIL' }} {{ v['iface'] }}: captured={{ v['was'] }} now={{ v['now'] }}
+                       ({{ 'this run brought it up, so the rescue tore it back down' if v['touched']
                             else 'already at target before this run — deliberately NOT touched' }})
               {% endfor %}
                   udev reloaded against the restored rules: {{ 'yes' if (__sn_restore_udev.rc | default(1)) == 0 else 'NO' }}

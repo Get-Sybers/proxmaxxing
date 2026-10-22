@@ -56,23 +56,23 @@
     quiet: true
 - name: "Pre-flight — read all target files"
   ansible.builtin.slurp:
-    src: "{{ cluster_patch_ludus_root }}/{{ item.file }}"
+    src: "{{ cluster_patch_ludus_root }}/{{ item['file'] }}"
   loop: "{{ cluster_patch_ludus_list }}"
   loop_control:
-    label: "{{ item.id }}"
+    label: "{{ item['id'] }}"
   register: __lp_preflight
 - name: "Pre-flight — every patch is applicable or already applied"
   vars:
     __pf_content: "{{ __lp_preflight.results[_pf_idx].content | b64decode }}"
   ansible.builtin.assert:
     that:
-      - (item.marker in __pf_content) or (__pf_content.count(item.stock) == 1)
-      - (item.marker in __pf_content) or (__pf_content.count(item.stock) <= 1)
+      - (item['marker'] in __pf_content) or (__pf_content.count(item['stock']) == 1)
+      - (item['marker'] in __pf_content) or (__pf_content.count(item['stock']) <= 1)
     fail_msg: >-
-      {{ item.id }} ({{ item.err }}): pre-flight failed for {{ item.file }}.
-      marker_present={{ item.marker in __pf_content }},
-      stock_present={{ item.stock in __pf_content }},
-      stock_count={{ __pf_content.count(item.stock) }}.
+      {{ item['id'] }} ({{ item['err'] }}): pre-flight failed for {{ item['file'] }}.
+      marker_present={{ item['marker'] in __pf_content }},
+      stock_present={{ item['stock'] in __pf_content }},
+      stock_count={{ __pf_content.count(item['stock']) }}.
       With the marker absent, the stock text must appear EXACTLY ONCE so there
       is one unambiguous place to patch. Zero means version skew after
       --update — re-derive this patch against the installed file. More than one
@@ -81,14 +81,14 @@
     quiet: true
   loop: "{{ cluster_patch_ludus_list }}"
   loop_control:
-    label: "{{ item.id }}"
+    label: "{{ item['id'] }}"
     index_var: _pf_idx
 - name: "Apply the text patches"
   ansible.builtin.include_tasks: apply_one.yml
   loop: "{{ cluster_patch_ludus_list }}"
   loop_control:
     loop_var: patch
-    label: "{{ patch.id }}"
+    label: "{{ patch['id'] }}"
 - name: "ERR-103 — read ludus.yml"
   ansible.builtin.slurp:
     src: "{{ cluster_patch_ludus_root }}/{{ cluster_patch_ludus_reorder.file }}"
@@ -184,15 +184,15 @@
 - name: "Every patch marker is present on disk"
   ansible.builtin.assert:
     that: >-
-      {{ (__lp_verify.results | selectattr('item', 'equalto', item.file) | first)
-         .content | b64decode is search(item.marker | regex_escape) }}
+      {{ (__lp_verify.results | selectattr('item', 'equalto', item['file']) | first)
+         .content | b64decode is search(item['marker'] | regex_escape) }}
     fail_msg: >-
-      {{ item.id }} ({{ item.err }}): marker not found in {{ item.file }} after
+      {{ item['id'] }} ({{ item['err'] }}): marker not found in {{ item['file'] }} after
       applying. The patch reported success but the file does not carry it.
     quiet: true
   loop: "{{ cluster_patch_ludus_list }}"
   loop_control:
-    label: "{{ item.id }}"
+    label: "{{ item['id'] }}"
   when: not ansible_check_mode
 - name: "ERR-103 ordering is correct on disk"
   vars:
@@ -218,18 +218,18 @@
 - name: "Ownership and mode are the extraction values"
   ansible.builtin.assert:
     that:
-      - item.stat.pw_name == cluster_patch_ludus_file_owner
-      - item.stat.gr_name == cluster_patch_ludus_file_group
-      - item.stat.mode == cluster_patch_ludus_file_mode
+      - item['stat']['pw_name'] == cluster_patch_ludus_file_owner
+      - item['stat']['gr_name'] == cluster_patch_ludus_file_group
+      - item['stat']['mode'] == cluster_patch_ludus_file_mode
     fail_msg: >-
-      {{ item.item }} is {{ item.stat.pw_name }}:{{ item.stat.gr_name }}
-      {{ item.stat.mode }}, not {{ cluster_patch_ludus_file_owner }}:{{ cluster_patch_ludus_file_group }}
+      {{ item['item'] }} is {{ item['stat']['pw_name'] }}:{{ item['stat']['gr_name'] }}
+      {{ item['stat']['mode'] }}, not {{ cluster_patch_ludus_file_owner }}:{{ cluster_patch_ludus_file_group }}
       {{ cluster_patch_ludus_file_mode }}. The Ludus API runs its playbooks as the
       non-root `ludus` user and will fail with EACCES.
     quiet: true
   loop: "{{ __lp_stat.results }}"
   loop_control:
-    label: "{{ item.item }}"
+    label: "{{ item['item'] }}"
 - name: "Every patched YAML file still parses"
   ansible.builtin.assert:
     that: >-

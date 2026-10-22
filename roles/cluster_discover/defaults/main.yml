@@ -27,3 +27,9 @@ cluster_discover_ceph: true
 # The host that holds the inventory checkout the records are written to
 # (the controller).
 cluster_discover_delegate_to: localhost
+# The identity the written records carry: by default the user running Ansible on
+# cluster_discover_delegate_to (the name and primary group id its user facts
+# report, read natively by the render stage) — set both to hand the records to
+# another owner, e.g. a shared inventory checkout.
+cluster_discover_record_owner: "{{ __cd_delegate_facts['ansible_facts']['user_id'] }}"
+cluster_discover_record_group: "{{ __cd_delegate_facts['ansible_facts']['user_gid'] }}"

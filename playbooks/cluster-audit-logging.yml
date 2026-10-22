@@ -24,43 +24,44 @@
             mode: "0750"
         - name: "Gate — pull each pinned artefact from NEXUS (digest enforced on download)"
           ansible.builtin.get_url:
-            url: "{{ nexus_url }}/repository/{{ nexus_apt_repo }}/{{ item.path }}"
-            dest: "{{ audit_stage_dir }}/{{ item.deb }}"
-            checksum: "sha256:{{ item.sha256 }}"
+            url: "{{ nexus_url }}/repository/{{ nexus_apt_repo }}/{{ item['path'] }}"
+            dest: "{{ audit_stage_dir }}/{{ item['deb'] }}"
+            checksum: "sha256:{{ item['sha256'] }}"
             owner: root
             group: root
             mode: "0640"
           loop: "{{ audit_artefacts }}"
-          loop_control: { label: "{{ item.deb }}" }
+          loop_control: { label: "{{ item['deb'] }}" }
         - name: "Gate — pull the SAME artefact from UPSTREAM (digest enforced on download)"
           ansible.builtin.get_url:
-            url: "{{ upstream_apt_url }}/{{ item.path }}"
-            dest: "{{ audit_stage_dir }}/.upstream-{{ item.deb }}"
-            checksum: "sha256:{{ item.sha256 }}"
+            url: "{{ upstream_apt_url }}/{{ item['path'] }}"
+            dest: "{{ audit_stage_dir }}/.upstream-{{ item['deb'] }}"
+            checksum: "sha256:{{ item['sha256'] }}"
             owner: root
             group: root
             mode: "0640"
           loop: "{{ audit_artefacts }}"
-          loop_control: { label: "{{ item.deb }}" }
+          loop_control: { label: "{{ item['deb'] }}" }
         - name: "Gate — checksum both copies independently"
           ansible.builtin.stat:
-            path: "{{ audit_stage_dir }}/{{ item.0 }}{{ item.1.deb }}"
+            path: "{{ audit_stage_dir }}/{{ item[0] }}{{ item[1]['deb'] }}"
             checksum_algorithm: sha256
           loop: "{{ ['', '.upstream-'] | product(audit_artefacts) | list }}"
-          loop_control: { label: "{{ item.0 }}{{ item.1.deb }}" }
+          loop_control: { label: "{{ item[0] }}{{ item[1]['deb'] }}" }
           register: __copies
         - name: "VERIFY (supply chain) — Nexus bytes == upstream bytes == pinned digest"
           ansible.builtin.assert:
             that:
               - __copies.results | map(attribute='stat.checksum') | unique | length == audit_artefacts | length
-              - __copies.results | selectattr('item.1.deb', 'equalto', item.deb)
+              - __copies.results | selectattr('item.1.deb', 'equalto', item['deb'])
                                 | map(attribute='stat.checksum') | unique | list == [item.sha256]
-            success_msg: "Supply chain OK — {{ item.deb }} is byte-identical across Nexus and packages.microsoft.com and matches its pin."
+            success_msg: "Supply chain OK — {{ item['deb'] }} is byte-identical across Nexus and packages.microsoft.com and matches its pin."
             fail_msg: >-
-              SUPPLY CHAIN MISMATCH for {{ item.deb }} — refusing to stage.
-              pinned={{ item.sha256 }} observed={{ __copies.results | selectattr('item.1.deb', 'equalto', item.deb) | map(attribute='stat.checksum') | list }}
+              SUPPLY CHAIN MISMATCH for {{ item['deb'] }} — refusing to stage.
+              pinned={{ item['sha256'] }}
+              observed={{ __copies.results | selectattr('item.1.deb', 'equalto', item['deb']) | map(attribute='stat.checksum') | list }}
           loop: "{{ audit_artefacts }}"
-          loop_control: { label: "{{ item.deb }}" }
+          loop_control: { label: "{{ item['deb'] }}" }
 - name: "Audit logging — auditd + Sysmon on each Proxmox node"
   hosts: proxmox_cluster
   serial: 1
@@ -129,17 +130,17 @@
           via the Proxmox API (pvesh rc={{ __audit_zfs.rc }}); need
           {{ audit_min_free_gb }}GB free. Refusing to enable audit logging.
     - name: "Preflight — the gated artefacts exist on the controller"
-      ansible.builtin.stat: { path: "{{ audit_stage_dir }}/{{ item.deb }}" }
+      ansible.builtin.stat: { path: "{{ audit_stage_dir }}/{{ item['deb'] }}" }
       loop: "{{ audit_artefacts }}"
-      loop_control: { label: "{{ item.deb }}" }
+      loop_control: { label: "{{ item['deb'] }}" }
       delegate_to: localhost
       register: __stagecheck
     - name: "Preflight — assert each gated artefact is present on the controller"
       ansible.builtin.assert:
-        that: item.stat.exists
-        fail_msg: "Missing controller artefact: {{ item.item.deb }} — run the gating play first."
+        that: item['stat']['exists']
+        fail_msg: "Missing controller artefact: {{ item['item']['deb'] }} — run the gating play first."
       loop: "{{ __stagecheck.results }}"
-      loop_control: { label: "{{ item.item.deb }}" }
+      loop_control: { label: "{{ item['item']['deb'] }}" }
     - name: "Fact-find: current dpkg state of every package this play installs"
       ansible.builtin.command: "dpkg-query -W -f=${Status}|${Version} {{ item }}"
       loop: "{{ audit_packages }}"
@@ -158,10 +159,10 @@
       tags: [auditd, sysmon, verify]
     - name: "Fact-find: slurp the ones that exist"
       ansible.builtin.slurp:
-        src: "{{ item.item }}"
+        src: "{{ item['item'] }}"
       loop: "{{ __cfg_stat.results }}"
-      loop_control: { label: "{{ item.item }}" }
-      when: item.stat.exists
+      loop_control: { label: "{{ item['item'] }}" }
+      when: item['stat']['exists']
       register: __cfg_slurp
       check_mode: false
       failed_when: false
@@ -190,34 +191,34 @@
     - name: "Fact-find: index the captured prior state per item"
       ansible.builtin.set_fact:
         __prior_pkgs: >-
-          {{ __prior_pkgs | default({}) | combine({ item.item: {
-               'installed': (item.rc == 0 and 'install ok installed' in item.stdout),
-               'version': (item.stdout.split('|')[1] | default('')) if item.rc == 0 else '' } }) }}
+          {{ __prior_pkgs | default({}) | combine({ item['item']: {
+               'installed': (item["rc"] == 0 and 'install ok installed' in item["stdout"]),
+               'version': (item["stdout"].split('|')[1] | default('')) if item["rc"] == 0 else '' } }) }}
       loop: "{{ __pkg_prior.results }}"
-      loop_control: { label: "{{ item.item }}" }
+      loop_control: { label: "{{ item['item'] }}" }
       tags: [auditd, sysmon, verify]
     - name: "Fact-find: index the captured file state per file"
       ansible.builtin.set_fact:
         __prior_cfg: >-
-          {{ __prior_cfg | default({}) | combine({ item.0.item: {
-               'existed': item.0.stat.exists,
-               'mode': item.0.stat.mode | default('0640'),
-               'owner': item.0.stat.pw_name | default('root'),
-               'group': item.0.stat.gr_name | default('root'),
-               'sha256': item.0.stat.checksum | default(''),
-               'b64': item.1.content | default(''),
-               'captured': item.1.content is defined } }) }}
+          {{ __prior_cfg | default({}) | combine({ item[0]['item']: {
+               'existed': item[0]["stat"]["exists"],
+               'mode': item[0]["stat"]["mode"] | default('0640'),
+               'owner': item[0]["stat"]["pw_name"] | default('root'),
+               'group': item[0]["stat"]["gr_name"] | default('root'),
+               'sha256': item[0]["stat"]["checksum"] | default(''),
+               'b64': item[1]["content"] | default(''),
+               'captured': item[1]["content"] is defined } }) }}
       loop: "{{ __cfg_stat.results | zip(__cfg_slurp.results) | list }}"
-      loop_control: { label: "{{ item.0.item }}" }
+      loop_control: { label: "{{ item[0]['item'] }}" }
       tags: [auditd, sysmon, verify]
     - name: "Fact-find: index the captured unit state per unit"
       ansible.builtin.set_fact:
         __prior_units: >-
-          {{ __prior_units | default({}) | combine({ item.item: {
-               'enabled': item.stdout.split('|')[0],
-               'active': item.stdout.split('|')[1] | default('unknown') } }) }}
+          {{ __prior_units | default({}) | combine({ item['item']: {
+               'enabled': item["stdout"].split('|')[0],
+               'active': item["stdout"].split('|')[1] | default('unknown') } }) }}
       loop: "{{ __unit_prior.results }}"
-      loop_control: { label: "{{ item.item }}" }
+      loop_control: { label: "{{ item['item'] }}" }
       tags: [auditd, sysmon, verify]
     - name: "Fact-find: report the prior state a rescue would put back"
       ansible.builtin.debug:
@@ -225,16 +226,16 @@
           {{ inventory_hostname }} — state captured BEFORE any change:
           packages (NOT rolled back — see the play header):
           {% for n, v in __prior_pkgs.items() %}
-            {{ n }}: {{ (v.version | default('?')) if v.installed else 'NOT INSTALLED' }}
+            {{ n }}: {{ (v['version'] | default('?')) if v['installed'] else 'NOT INSTALLED' }}
           {% endfor %}
           config files (restored byte-for-byte on failure):
           {% for n, f in __prior_cfg.items() %}
-            {{ n }}: {{ ('present, ' ~ f.mode ~ ' ' ~ f.owner ~ ':' ~ f.group ~ ', sha256 ' ~ f.sha256[:12] ~ '…')
-                         if f.existed else 'ABSENT (rescue would delete it again)' }}
+            {{ n }}: {{ ('present, ' ~ f['mode'] ~ ' ' ~ f['owner'] ~ ':' ~ f['group'] ~ ', sha256 ' ~ f['sha256'][:12] ~ '…')
+                         if f['existed'] else 'ABSENT (rescue would delete it again)' }}
           {% endfor %}
           units (enabled/active restored on failure):
           {% for n, u in __prior_units.items() %}
-            {{ n }}: {{ u.enabled }}/{{ u.active }}
+            {{ n }}: {{ u['enabled'] }}/{{ u['active'] }}
           {% endfor %}
           kernel audit rules currently loaded: {{ __kernel_rules_prior.stdout_lines | default([]) | length }}
       tags: [auditd, sysmon, verify]
@@ -276,8 +277,8 @@
         - name: "Configure auditd.conf (rotation + non-fatal disk actions)"
           ansible.builtin.lineinfile:
             path: /etc/audit/auditd.conf
-            regexp: "^\\s*{{ item.key }}\\s*="
-            line: "{{ item.key }} = {{ item.value }}"
+            regexp: "^\\s*{{ item['key'] }}\\s*="
+            line: "{{ item['key'] }} = {{ item['value'] }}"
             state: present
           loop:
             - { key: max_log_file, value: "100" }
@@ -291,7 +292,7 @@
             - { key: disk_error_action, value: "SYSLOG" }
             - { key: flush, value: "INCREMENTAL_ASYNC" }
             - { key: freq, value: "50" }
-          loop_control: { label: "{{ item.key }}" }
+          loop_control: { label: "{{ item['key'] }}" }
           tags: [auditd]
         - name: "Ensure the state directory exists"
           ansible.builtin.file:
@@ -331,9 +332,9 @@
           tags: [auditd]
         - name: "Which candidate watch paths exist on this node?"
           ansible.builtin.stat:
-            path: "{{ item.path }}"
+            path: "{{ item['path'] }}"
           loop: "{{ audit_watch_candidates }}"
-          loop_control: { label: "{{ item.path }}" }
+          loop_control: { label: "{{ item['path'] }}" }
           register: __watchstat
           tags: [auditd]
         - name: "Build the node-local watch list"
@@ -432,21 +433,21 @@
       rescue:
         - name: "Rescue: restore the bytes of every managed config file that EXISTED"
           ansible.builtin.copy:
-            content: "{{ item.value.b64 | b64decode }}"
-            dest: "{{ item.key }}"
-            owner: "{{ item.value.owner }}"
-            group: "{{ item.value.group }}"
-            mode: "{{ item.value.mode }}"
+            content: "{{ item['value']['b64'] | b64decode }}"
+            dest: "{{ item['key'] }}"
+            owner: "{{ item['value']['owner'] }}"
+            group: "{{ item['value']['group'] }}"
+            mode: "{{ item['value']['mode'] }}"
           loop: "{{ __prior_cfg | dict2items | selectattr('value.existed') | list }}"
-          loop_control: { label: "{{ item.key }} <- {{ item.value.sha256[:12] }}…" }
+          loop_control: { label: "{{ item['key'] }} <- {{ item['value']['sha256'][:12] }}…" }
           register: __restore_cfg_present
           failed_when: false
         - name: "Rescue: delete every managed config file that did NOT exist"
           ansible.builtin.file:
-            path: "{{ item.key }}"
+            path: "{{ item['key'] }}"
             state: absent
           loop: "{{ __prior_cfg | dict2items | rejectattr('value.existed') | list }}"
-          loop_control: { label: "{{ item.key }} <- back to ABSENT" }
+          loop_control: { label: "{{ item['key'] }} <- back to ABSENT" }
           register: __restore_cfg_absent
           failed_when: false
         - name: "Rescue: reload the restored ruleset into the kernel"
@@ -463,25 +464,25 @@
           ansible.builtin.shell:
             cmd: |
               set -o pipefail
-              want_en="{{ item.value.enabled }}"; want_ac="{{ item.value.active }}"
-              case "$want_en" in enabled) systemctl enable {{ item.key }} ;;
-                                 disabled) systemctl disable {{ item.key }} ;;
+              want_en="{{ item['value']['enabled'] }}"; want_ac="{{ item['value']['active'] }}"
+              case "$want_en" in enabled) systemctl enable {{ item['key'] }} ;;
+                                 disabled) systemctl disable {{ item['key'] }} ;;
                                  *) echo "prior enabled-state was '$want_en' — not reassertable" ;; esac
-              case "$want_ac" in active) systemctl start {{ item.key }} ;;
-                                 inactive|failed) systemctl stop {{ item.key }} ;;
+              case "$want_ac" in active) systemctl start {{ item['key'] }} ;;
+                                 inactive|failed) systemctl stop {{ item['key'] }} ;;
                                  *) echo "prior active-state was '$want_ac' — not reassertable" ;; esac
             executable: /bin/bash
           loop: "{{ __prior_units | dict2items }}"
-          loop_control: { label: "{{ item.key }} <- {{ item.value.enabled }}/{{ item.value.active }}" }
+          loop_control: { label: "{{ item['key'] }} <- {{ item['value']['enabled'] }}/{{ item['value']['active'] }}" }
           register: __restore_units
           changed_when: true
           failed_when: false
         - name: "Rescue verify: re-stat every managed config file"
           ansible.builtin.stat:
-            path: "{{ item.key }}"
+            path: "{{ item['key'] }}"
             checksum_algorithm: sha256
           loop: "{{ __prior_cfg | dict2items }}"
-          loop_control: { label: "{{ item.key }}" }
+          loop_control: { label: "{{ item['key'] }}" }
           register: __restore_cfg_stat
           check_mode: false
           failed_when: false
@@ -490,11 +491,11 @@
             cmd: |
               set -o pipefail
               printf '%s|%s' \
-                "$(systemctl is-enabled {{ item.key }} 2>/dev/null || echo unknown)" \
-                "$(systemctl is-active  {{ item.key }} 2>/dev/null || echo unknown)"
+                "$(systemctl is-enabled {{ item['key'] }} 2>/dev/null || echo unknown)" \
+                "$(systemctl is-active  {{ item['key'] }} 2>/dev/null || echo unknown)"
             executable: /bin/bash
           loop: "{{ __prior_units | dict2items }}"
-          loop_control: { label: "{{ item.key }}" }
+          loop_control: { label: "{{ item['key'] }}" }
           register: __restore_unit_state
           changed_when: false
           failed_when: false
@@ -507,27 +508,27 @@
           ansible.builtin.set_fact:
             __cfg_verdicts: >-
               {{ __cfg_verdicts | default([]) + [{
-                   'file': item.item.key,
-                   'was': ('sha256 ' ~ item.item.value.sha256[:12] ~ '… ' ~ item.item.value.mode)
-                          if item.item.value.existed else 'ABSENT',
-                   'now': ('sha256 ' ~ (item.stat.checksum | default('?'))[:12] ~ '… ' ~ (item.stat.mode | default('?')))
-                          if item.stat.exists | default(false) else 'ABSENT',
-                   'ok': (item.stat.exists | default(false)) == item.item.value.existed
-                         and (((item.stat.checksum | default('')) == item.item.value.sha256
-                               and (item.stat.mode | default('')) == item.item.value.mode)
-                              if item.item.value.existed else true) }] }}
+                   'file': item["item"]["key"],
+                   'was': ('sha256 ' ~ item["item"]["value"]["sha256"][:12] ~ '… ' ~ item["item"]["value"]["mode"])
+                          if item['item']['value']['existed'] else 'ABSENT',
+                   'now': ('sha256 ' ~ (item["stat"]["checksum"] | default('?'))[:12] ~ '… ' ~ (item["stat"]["mode"] | default('?')))
+                          if item['stat']['exists'] | default(false) else 'ABSENT',
+                   'ok': (item["stat"]["exists"] | default(false)) == item["item"]["value"]["existed"]
+                         and (((item['stat']['checksum'] | default('')) == item['item']['value']['sha256']
+                               and (item['stat']['mode'] | default('')) == item['item']['value']['mode'])
+                              if item['item']['value']['existed'] else true) }] }}
           loop: "{{ __restore_cfg_stat.results }}"
-          loop_control: { label: "{{ item.item.key }}" }
+          loop_control: { label: "{{ item['item']['key'] }}" }
         - name: "Rescue verify: compare, unit by unit, what came back against what was captured"
           ansible.builtin.set_fact:
             __unit_verdicts: >-
               {{ __unit_verdicts | default([]) + [{
-                   'unit': item.item.key,
-                   'was': item.item.value.enabled ~ '/' ~ item.item.value.active,
-                   'now': (item.stdout | default('?|?')) | replace('|', '/'),
-                   'ok': (item.item.value.enabled ~ '|' ~ item.item.value.active) == (item.stdout | default('')) }] }}
+                   'unit': item["item"]["key"],
+                   'was': item["item"]["value"]["enabled"] ~ '/' ~ item["item"]["value"]["active"],
+                   'now': (item["stdout"] | default('?|?')) | replace('|', '/'),
+                   'ok': (item["item"]["value"]["enabled"] ~ '|' ~ item["item"]["value"]["active"]) == (item["stdout"] | default('')) }] }}
           loop: "{{ __restore_unit_state.results }}"
-          loop_control: { label: "{{ item.item.key }}" }
+          loop_control: { label: "{{ item['item']['key'] }}" }
         - name: "Rescue verify: is the KERNEL back on the ruleset it had?"
           ansible.builtin.set_fact:
             __kernel_rules_restored: >-
@@ -551,10 +552,10 @@
                                "NOT VERIFIED — at least one item does NOT match what was captured, so audit logging on
                                 this node is in an UNKNOWN state and needs manual inspection." }}
               {% for v in __cfg_verdicts %}
-                  {{ 'OK  ' if v.ok else 'FAIL' }} {{ v.file }}: captured={{ v.was }} now={{ v.now }}
+                  {{ 'OK  ' if v['ok'] else 'FAIL' }} {{ v['file'] }}: captured={{ v['was'] }} now={{ v['now'] }}
               {% endfor %}
               {% for v in __unit_verdicts %}
-                  {{ 'OK  ' if v.ok else 'FAIL' }} unit {{ v.unit }}: captured={{ v.was }} now={{ v.now }}
+                  {{ 'OK  ' if v['ok'] else 'FAIL' }} unit {{ v['unit'] }}: captured={{ v['was'] }} now={{ v['now'] }}
               {% endfor %}
                   {{ 'OK  ' if __kernel_rules_restored | bool else 'FAIL' }} kernel ruleset:
                   captured {{ __kernel_rules_prior.stdout_lines | default([]) | length }} rules,
