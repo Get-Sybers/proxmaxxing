@@ -49,12 +49,21 @@
   delegate_facts: true
   register: __cd_delegate_facts
 
+- name: "render | Resolve the identity the records carry (the inputs, else that user)"
+  ansible.builtin.set_fact:
+    __cd_record_owner: >-
+      {{ cluster_discover_record_owner if (cluster_discover_record_owner | string | length > 0)
+         else __cd_delegate_facts['ansible_facts']['ansible_user_id'] }}
+    __cd_record_group: >-
+      {{ cluster_discover_record_group if (cluster_discover_record_group | string | length > 0)
+         else __cd_delegate_facts['ansible_facts']['ansible_user_gid'] }}
+
 - name: "render | Ensure the record directories exist"
   ansible.builtin.file:
     path: "{{ __cd_dest | dirname }}"
     state: directory
-    owner: "{{ cluster_discover_record_owner }}"
-    group: "{{ cluster_discover_record_group }}"
+    owner: "{{ __cd_record_owner }}"
+    group: "{{ __cd_record_group }}"
     mode: "0755"
   loop:
     - "{{ __cd_node_dest }}"
@@ -68,8 +77,8 @@
   ansible.builtin.template:
     src: node.yml.j2
     dest: "{{ __cd_node_dest }}"
-    owner: "{{ cluster_discover_record_owner }}"
-    group: "{{ cluster_discover_record_group }}"
+    owner: "{{ __cd_record_owner }}"
+    group: "{{ __cd_record_group }}"
     mode: "0644"
     backup: "{{ cluster_discover_backup | bool }}"
   delegate_to: "{{ cluster_discover_delegate_to }}"
@@ -78,8 +87,8 @@
   ansible.builtin.template:
     src: cluster.yml.j2
     dest: "{{ __cd_cluster_dest }}"
-    owner: "{{ cluster_discover_record_owner }}"
-    group: "{{ cluster_discover_record_group }}"
+    owner: "{{ __cd_record_owner }}"
+    group: "{{ __cd_record_group }}"
     mode: "0644"
     backup: "{{ cluster_discover_backup | bool }}"
   run_once: true

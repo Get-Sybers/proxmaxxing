@@ -56,8 +56,8 @@ the configuration and the live cluster, which makes the play a drift gate.
 | `cluster_discover_strict` | No | `false` | Fail when the configuration disagrees with the live cluster. |
 | `cluster_discover_ceph` | No | `true` | Gather the Ceph side (auto-skipped without `ceph.conf`). |
 | `cluster_discover_delegate_to` | No | `localhost` | The host holding the inventory checkout. |
-| `cluster_discover_record_owner` | No | the delegate's running user | Owner of the written records, read natively from the delegate's user facts. |
-| `cluster_discover_record_group` | No | that user's primary group | Group of the written records. |
+| `cluster_discover_record_owner` | No | `""` | Owner of the written records; empty means the user running Ansible on the delegate, read natively from its user facts. |
+| `cluster_discover_record_group` | No | `""` | Group of the written records; empty means that user's primary group id. |
 
 The role publishes `cluster_discover_node_facts`, `cluster_discover_cluster_facts` and `cluster_discover_ceph_nodes` (the raw gathered
 records) as facts; a caller can supply them itself and include `tasks_from: render` to merge and write without gathering, which is how the
