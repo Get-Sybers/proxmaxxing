@@ -4,18 +4,21 @@
   gather_facts: false
   tasks:
     - name: "Fact-find: Ceph is up and answering"
-      ansible.builtin.command: ceph health
+      ansible.builtin.command:
+        argv: [ceph, health]
       register: __health
       changed_when: false
       check_mode: false
       failed_when: __health.rc != 0
     - name: "Fact-find: the mon config store (authoritative for what is EXPLICITLY set)"
-      ansible.builtin.command: ceph config dump -f json
+      ansible.builtin.command:
+        argv: [ceph, config, dump, -f, json]
       register: __config_dump
       changed_when: false
       check_mode: false
     - name: "Fact-find: every pool with its current size and min_size"
-      ansible.builtin.command: ceph osd pool ls detail -f json
+      ansible.builtin.command:
+        argv: [ceph, osd, pool, ls, detail, -f, json]
       register: __pool_detail
       changed_when: false
       check_mode: false
@@ -113,12 +116,14 @@
           loop: "{{ ceph_conf_defaults }}"
           loop_control: { label: "osd_pool_default_{{ item['key'] }}" }
         - name: "Post-check: re-read the mon config store"
-          ansible.builtin.command: ceph config dump -f json
+          ansible.builtin.command:
+            argv: [ceph, config, dump, -f, json]
           register: __config_dump_after
           changed_when: false
           check_mode: false
         - name: "Post-check: re-read every pool's size and min_size"
-          ansible.builtin.command: ceph osd pool ls detail -f json
+          ansible.builtin.command:
+            argv: [ceph, osd, pool, ls, detail, -f, json]
           register: __pool_detail_after
           changed_when: false
           check_mode: false
@@ -209,13 +214,15 @@
           register: __restore_conf
           failed_when: false
         - name: "Rescue verify: re-read the mon config store"
-          ansible.builtin.command: ceph config dump -f json
+          ansible.builtin.command:
+            argv: [ceph, config, dump, -f, json]
           register: __restore_dump
           changed_when: false
           check_mode: false
           failed_when: false
         - name: "Rescue verify: re-read the pools"
-          ansible.builtin.command: ceph osd pool ls detail -f json
+          ansible.builtin.command:
+            argv: [ceph, osd, pool, ls, detail, -f, json]
           register: __restore_pools_raw
           changed_when: false
           check_mode: false
@@ -297,7 +304,8 @@
               (3) NOTE: a pool `size` revert restores the NUMBER immediately, but the
                   re-replication it triggers is real backfill work — check `ceph -s`.
     - name: "Verify health after tuning"
-      ansible.builtin.command: ceph health
+      ansible.builtin.command:
+        argv: [ceph, health]
       register: __health_after
       changed_when: false
       check_mode: false

@@ -1,7 +1,7 @@
 ---
 - name: "verify | Confirm the Ludus services are active"
   ansible.builtin.command:
-    cmd: "systemctl is-active {{ item }}"  # noqa: command-instead-of-module
+    argv: [systemctl, is-active, "{{ item }}"]  # noqa: command-instead-of-module
   loop:
     - ludus
     - ludus-admin
@@ -14,7 +14,7 @@
 
 - name: "verify | Read the installed Ludus version"
   ansible.builtin.command:
-    cmd: "ludus version"  # noqa: command-instead-of-module
+    argv: [ludus, version]  # noqa: command-instead-of-module
   register: __clv_version
   changed_when: false
   check_mode: false

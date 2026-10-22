@@ -2,11 +2,12 @@
 - name: "Post-update reconcile — re-apply local patches to stock Ludus files"
   hosts: localhost
   connection: local
-  gather_facts: false
+  gather_facts: true
+  gather_subset: ["!all", "!min", "user"]
   pre_tasks:
     - name: "Running as root"
       ansible.builtin.assert:
-        that: lookup('pipe', 'id -u') == '0'
+        that: ansible_facts['user_uid'] | int == 0
         fail_msg: "must run as root — this rewrites files in the stock Ludus tree"
         quiet: true
   roles:
@@ -14,7 +15,8 @@
     - role: get_sybers.cluster.cluster_plugin_packer
   post_tasks:
     - name: "Read the current ACL table (read-only)"
-      ansible.builtin.command: pveum acl list --output-format json
+      ansible.builtin.command:
+        argv: [pveum, acl, list, --output-format, json]
       register: __reconcile_acl
       changed_when: false
       tags: [pveum_noaccess]

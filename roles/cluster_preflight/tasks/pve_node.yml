@@ -15,13 +15,14 @@
       run only on members of the cluster (the {{ cluster_preflight_cluster_group }} group).
     quiet: true
 - name: "pve_node | Read the execution host's name"
-  ansible.builtin.command: hostname
-  register: __cpf_hostname
-  changed_when: false
-  check_mode: false
+  ansible.builtin.setup:
+    gather_subset: ["!all", "!min", "platform"]
+  register: __cpf_platform
   delegate_to: "{{ cluster_preflight_delegate_to }}"
+  delegate_facts: true
 - name: "pve_node | Read cluster membership"
-  ansible.builtin.command: pvecm nodes
+  ansible.builtin.command:
+    argv: [pvecm, nodes]
   register: __cpf_pvecm
   changed_when: false
   failed_when: false
@@ -31,10 +32,10 @@
   ansible.builtin.assert:
     that: >-
       (__cpf_pvecm.rc == 0
-       and (__cpf_hostname.stdout | trim) in __cpf_pvecm.stdout.split())
-      or ((__cpf_hostname.stdout | trim) in (groups[cluster_preflight_cluster_group] | default([])))
+       and __cpf_platform['ansible_facts']['ansible_nodename'] in __cpf_pvecm.stdout.split())
+      or (__cpf_platform['ansible_facts']['ansible_nodename'] in (groups[cluster_preflight_cluster_group] | default([])))
     fail_msg: >-
-      Host '{{ __cpf_hostname.stdout | trim }}' is not in `pvecm nodes`
+      Host '{{ __cpf_platform['ansible_facts']['ansible_nodename'] }}' is not in `pvecm nodes`
       (rc={{ __cpf_pvecm.rc }}) and not in inventory group
       {{ cluster_preflight_cluster_group }}. cluster plays run only on cluster members.
     quiet: true

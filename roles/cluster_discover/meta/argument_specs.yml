@@ -64,12 +64,12 @@ argument_specs:
       cluster_discover_record_owner:
         type: str
         required: false
-        default: "{{ __cd_delegate_facts['ansible_facts']['user_id'] }}"
+        default: "{{ __cd_delegate_facts['ansible_facts']['ansible_user_id'] }}"
         description: "Owner of the written records; by default the user running Ansible on the delegate, read from its user facts."
       cluster_discover_record_group:
         type: str
         required: false
-        default: "{{ __cd_delegate_facts['ansible_facts']['user_gid'] }}"
+        default: "{{ __cd_delegate_facts['ansible_facts']['ansible_user_gid'] }}"
         description: "Group of the written records; by default that user's primary group id."
   render:
     short_description: "Merge already-gathered facts into the configured records and write them (no gathering)."
@@ -118,10 +118,10 @@ argument_specs:
       cluster_discover_record_owner:
         type: str
         required: false
-        default: "{{ __cd_delegate_facts['ansible_facts']['user_id'] }}"
+        default: "{{ __cd_delegate_facts['ansible_facts']['ansible_user_id'] }}"
         description: "Owner of the written records; by default the user running Ansible on the delegate, read from its user facts."
       cluster_discover_record_group:
         type: str
         required: false
-        default: "{{ __cd_delegate_facts['ansible_facts']['user_gid'] }}"
+        default: "{{ __cd_delegate_facts['ansible_facts']['ansible_user_gid'] }}"
         description: "Group of the written records; by default that user's primary group id."

@@ -2,15 +2,18 @@
 # Liveness probe: `systemctl is-active` is a read-only status query with no
 # module equivalent; changed_when:false keeps it honest (ansible-standards §Modules).
 - name: "verify | Verify — Sysmon service is active"  # noqa: command-instead-of-module
-  ansible.builtin.command: "systemctl is-active sysmon"
+  ansible.builtin.command:
+    argv: [systemctl, is-active, sysmon]
   register: __sml_active
   changed_when: false
   failed_when: __sml_active.stdout | trim != 'active'
 - name: "verify | Verify (e2e) — run a uniquely named process for Sysmon to observe"
-  ansible.builtin.command: "/bin/sleep 0.37"
+  ansible.builtin.command:
+    argv: [/bin/sleep, "0.37"]
   changed_when: false
 - name: "verify | Verify (e2e) — Sysmon logged a ProcessCreate (EventID 1)"
-  ansible.builtin.command: "journalctl -u sysmon --since -2min -n 300 --no-pager"
+  ansible.builtin.command:
+    argv: [journalctl, -u, sysmon, --since, -2min, -n, "300", --no-pager]
   register: __sml_events
   changed_when: false
   failed_when: false

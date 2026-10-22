@@ -19,8 +19,8 @@
     - name: "Decide whether to impersonate the target owner"
       ansible.builtin.set_fact:
         __ds_impersonate: >-
-          {{ ('--user ' ~ default_sources_owner)
-             if __cla_caller_user != default_sources_owner else '' }}
+          {{ ['--user', default_sources_owner]
+             if __cla_caller_user != default_sources_owner else [] }}
     - name: "Derive the full sourceID for each desired source"
       ansible.builtin.set_fact:
         __ds_desired: >-
@@ -31,7 +31,8 @@
       loop_control:
         label: "{{ item['slug'] }}"
     - name: "List every registered source as JSON"
-      ansible.builtin.command: ludus source list --json
+      ansible.builtin.command:
+        argv: [ludus, source, list, --json]
       environment:
         LUDUS_API_KEY: "{{ __cla_api_key }}"
       register: __ds_list
@@ -64,7 +65,8 @@
           purge {{ __ds_to_remove | length }}
           {{ (': ' ~ (__ds_to_remove | map(attribute='sourceID') | join(', '))) if __ds_to_remove | length else '' }}.
     - name: "Remove each retired source"
-      ansible.builtin.command: "ludus source rm {{ item['sourceID'] }}"
+      ansible.builtin.command:
+        argv: [ludus, source, rm, "{{ item['sourceID'] }}"]
       environment:
         LUDUS_API_KEY: "{{ __cla_api_key }}"
       loop: "{{ __ds_to_remove }}"
@@ -95,9 +97,10 @@
           per-source lines above for the scrubbed CLI output.
         quiet: true
     - name: "Add each missing default source as {{ default_sources_owner }}"
-      ansible.builtin.command: >-
-        ludus {{ __ds_impersonate }} source add {{ item['url'] }}
-        --id {{ item['id'] }} --ref {{ default_sources_ref }} --all
+      ansible.builtin.command:
+        argv: >-
+          {{ ['ludus'] + __ds_impersonate
+             + ['source', 'add', item['url'], '--id', item['id'], '--ref', default_sources_ref, '--all'] }}
       environment:
         LUDUS_API_KEY: "{{ __cla_api_key }}"
       loop: "{{ __ds_to_add }}"
@@ -129,7 +132,8 @@
           re-run. See the per-source lines above for the scrubbed CLI output.
         quiet: true
     - name: "Re-list every registered source"
-      ansible.builtin.command: ludus source list --json
+      ansible.builtin.command:
+        argv: [ludus, source, list, --json]
       environment:
         LUDUS_API_KEY: "{{ __cla_api_key }}"
       register: __ds_after
