@@ -6,8 +6,8 @@
   vars:
     cluster_secrets_backend: file
     cluster_secrets_request:
-      name: "{{ item.label }}"
-      path: "{{ item.path }}"
+      name: "{{ item['label'] }}"
+      path: "{{ item['path'] }}"
       required: true
 - name: "vault-migrate-one | Keep the plaintext and its fingerprint (no_log)"
   ansible.builtin.set_fact:
@@ -33,7 +33,7 @@
     name: get_sybers.cluster.cluster_pb_store
     tasks_from: record_read
   vars:
-    cluster_pb_store_record_name: "{{ item.name }}"
+    cluster_pb_store_record_name: "{{ item['name'] }}"
 - name: "vault-migrate-one | Remember whether it existed (non-secret)"
   ansible.builtin.set_fact:
     __vm_existing_id: "{{ __pb_record_found_id }}"
@@ -45,7 +45,7 @@
     name: get_sybers.cluster.cluster_pb_store
     tasks_from: record_read
   vars:
-    cluster_pb_store_record_name: "{{ item.name }}"
+    cluster_pb_store_record_name: "{{ item['name'] }}"
 - name: "vault-migrate-one | Decrypt what was actually persisted"
   ansible.builtin.command:
     argv:
@@ -66,12 +66,12 @@
       - __pb_record_found | bool
       - (__vm_readback.stdout | b64decode | hash('sha256')) == __vm_plain_sha
     fail_msg: >-
-      MIGRATION ROUND-TRIP FAILED for entry {{ item.label }}: the value stored
+      MIGRATION ROUND-TRIP FAILED for entry {{ item['label'] }}: the value stored
       in gs_infra_credentials does not decrypt back to the bytes read from the
       vault. The vault copy is UNTOUCHED (this play never deletes), so nothing
       is lost — but do NOT run the removal step until this is understood.
     success_msg: >-
-      Entry {{ item.label }} migrated and verified: stored ciphertext decrypts
+      Entry {{ item['label'] }} migrated and verified: stored ciphertext decrypts
       to the identical plaintext.
     quiet: true
   no_log: true
@@ -87,13 +87,13 @@
   ansible.builtin.set_fact:
     __vm_migrated: >-
       {{ __vm_migrated | default([]) + [{
-           'label': item.label,
+           'label': item["label"],
            'action': ('updated' if __vm_existed else 'created'),
            'verified': true
          }] }}
 - name: "vault-migrate-one | Report"
   ansible.builtin.debug:
     msg: >-
-      {{ item.label }}: {{ 'updated in place' if __vm_existed else 'created' }}
+      {{ item['label'] }}: {{ 'updated in place' if __vm_existed else 'created' }}
       in gs_infra_credentials, encrypted with Ludus's own
       database_encryption_key, read back and verified. Vault copy left intact.

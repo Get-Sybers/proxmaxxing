@@ -1,0 +1,27 @@
+---
+changed:
+  - >-
+    Loop items, declared loop variables and Jinja loop variables are read with
+    bracket notation (``item['key']``, never ``item.key``), as the standard
+    requires: dot access breaks on hyphenated keys and collides with the dict
+    methods.
+  - >-
+    ``cluster_discover`` writes its records with an explicit owner and group —
+    the new inputs ``cluster_discover_record_owner`` and
+    ``cluster_discover_record_group`` default to the identity of the user
+    running Ansible on ``cluster_discover_delegate_to``, read natively by the
+    render stage (``setup``, the ``user`` subset).
+  - >-
+    ``cluster_plugin_packer`` declares the plugin tree's mode
+    (``u=rwX,g=rX,o=rX``) alongside its owner and group.
+  - >-
+    ``packer-iso-redirect.yml`` is the read-only report it had already become:
+    the rollback of a rewrite the role refuses to make is gone, and the root
+    check reads the user facts instead of shelling out.
+  - >-
+    ``cluster_secrets`` ships a ``tasks/main.yml`` that refuses a bare include
+    and names its entry points, like every role in the collection.
+fixed:
+  - >-
+    The ``ceph.conf`` rescue restore declares the identity pmxcfs presents
+    (``root:www-data 0640``) instead of a mode the filesystem cannot take.

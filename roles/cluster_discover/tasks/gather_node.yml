@@ -67,16 +67,16 @@
   ansible.builtin.set_fact:
     __cd_disks: >-
       {{ __cd_disks | default([]) + [{
-           'dev': __cd_disk.name,
-           'size': __cd_disk.size,
-           'model': (__cd_disk.model | default('', true) | trim) or none,
-           'serial': (__cd_disk.serial | default('', true) | trim) or none,
-           'transport': __cd_disk.tran | default(none),
-           'rotational': __cd_disk.rota | default(none) }] }}
+           'dev': __cd_disk["name"],
+           'size': __cd_disk["size"],
+           'model': (__cd_disk["model"] | default('', true) | trim) or none,
+           'serial': (__cd_disk["serial"] | default('', true) | trim) or none,
+           'transport': __cd_disk["tran"] | default(none),
+           'rotational': __cd_disk["rota"] | default(none) }] }}
   loop: "{{ (__cd_lsblk.stdout | from_json).blockdevices | selectattr('type', 'eq', 'disk') | list }}"
   loop_control:
     loop_var: __cd_disk
-    label: "{{ __cd_disk.name }}"
+    label: "{{ __cd_disk['name'] }}"
 
 - name: "gather_node | Shape each ZFS pool record"
   ansible.builtin.set_fact:
@@ -98,38 +98,38 @@
 - name: "gather_node | Shape each interface record"
   ansible.builtin.set_fact:
     __cd_network: >-
-      {{ __cd_network | default({}) | combine({__cd_if.ifname: ({
+      {{ __cd_network | default({}) | combine({__cd_if['ifname']: ({
            'ip': ((__cd_addr.local ~ '/' ~ __cd_addr.prefixlen) if __cd_addr else none),
-           'type': __cd_if.linkinfo.info_kind | default(__cd_if.link_type),
-           'mtu': __cd_if.mtu | default(none),
-           'state': __cd_if.operstate | default(none) }
+           'type': __cd_if["linkinfo"]["info_kind"] | default(__cd_if["link_type"]),
+           'mtu': __cd_if["mtu"] | default(none),
+           'state': __cd_if["operstate"] | default(none) }
            | combine({'ports': __cd_ports} if __cd_ports | length > 0 else {})) }) }}
   vars:
     __cd_addr: >-
-      {{ (__cd_if.addr_info | default([]) | selectattr('family', 'eq', 'inet')
+      {{ (__cd_if['addr_info'] | default([]) | selectattr('family', 'eq', 'inet')
           | selectattr('scope', 'eq', 'global') | list)[0] | default({}) }}
     __cd_ports: >-
-      {{ __cd_ifaces | selectattr('master', 'defined') | selectattr('master', 'eq', __cd_if.ifname)
+      {{ __cd_ifaces | selectattr('master', 'defined') | selectattr('master', 'eq', __cd_if['ifname'])
          | map(attribute='ifname') | reject('match', cluster_discover_iface_ignore) | sort }}
   loop: "{{ __cd_ifaces | rejectattr('ifname', 'match', cluster_discover_iface_ignore) | list }}"
   loop_control:
     loop_var: __cd_if
-    label: "{{ __cd_if.ifname }}"
+    label: "{{ __cd_if['ifname'] }}"
 
 - name: "gather_node | Shape each guest record"
   ansible.builtin.set_fact:
     __cd_guest_list: >-
       {{ __cd_guest_list | default([]) + [{
-           'kind': 'template' if (__cd_guest.template | default(0) | int) == 1 else __cd_guest.kind,
-           'id': __cd_guest.vmid | int,
-           'name': __cd_guest.name | default(none),
-           'status': __cd_guest.status | default(none) }] }}
+           'kind': 'template' if (__cd_guest["template"] | default(0) | int) == 1 else __cd_guest["kind"],
+           'id': __cd_guest["vmid"] | int,
+           'name': __cd_guest["name"] | default(none),
+           'status': __cd_guest["status"] | default(none) }] }}
   loop: >-
     {{ (((__cd_qemu.stdout | from_json) if __cd_qemu.rc == 0 else []) | map('combine', {'kind': 'vm'}) | list)
        + (((__cd_lxc.stdout | from_json) if __cd_lxc.rc == 0 else []) | map('combine', {'kind': 'ct'}) | list) }}
   loop_control:
     loop_var: __cd_guest
-    label: "{{ __cd_guest.kind }} {{ __cd_guest.vmid }}"
+    label: "{{ __cd_guest['kind'] }} {{ __cd_guest['vmid'] }}"
 
 - name: "gather_node | Assemble this node's record"
   ansible.builtin.set_fact:

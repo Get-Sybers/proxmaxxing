@@ -1,0 +1,14 @@
+---
+changed:
+  - >-
+    Every ``ansible.builtin.command`` is argv-form (one list element per
+    argument, never a free-form string), so an argument that carries a space
+    reaches the program whole and nothing is re-split by the module; the
+    templated command loops carry lists, and the ``ludus source add``
+    impersonation is a list of arguments.
+  - >-
+    ``cluster_preflight`` reads the effective uid and the node name from the
+    delegate's facts (``setup``, the ``user`` and ``platform`` subsets) instead
+    of running ``id -u`` and ``hostname``; ``cluster-token-restore-from-pve``
+    and ``post-update-reconcile`` assert root from the user facts instead of a
+    ``pipe`` lookup.

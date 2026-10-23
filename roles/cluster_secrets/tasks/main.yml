@@ -1,0 +1,10 @@
+---
+# A library of entry points driven with tasks_from: `get` (the one interface a
+# service role fetches a secret through), `forget`, `ludus_root_key` and
+# `ludus_user_key`. A bare include is a mistake.
+- name: "Refuse a bare include — use a tasks_from entry point"
+  ansible.builtin.fail:
+    msg: >-
+      cluster_secrets has no default entry point. Include it with
+      tasks_from: get (with a cluster_secrets_request), forget, ludus_root_key
+      or ludus_user_key.

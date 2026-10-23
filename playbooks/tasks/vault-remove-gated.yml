@@ -44,19 +44,19 @@
       - shred
       - --remove
       - --zero
-      - "{{ item.path }}"
+      - "{{ item['path'] }}"
   loop: "{{ __vm_remove }}"
   loop_control:
-    label: "{{ item.label }}"
+    label: "{{ item['label'] }}"
   register: __vm_shred
   no_log: true
   changed_when: true
 - name: "vault-remove-gated | NEGATIVE CONTROL — re-stat each removed path"
   ansible.builtin.stat:
-    path: "{{ item.path }}"
+    path: "{{ item['path'] }}"
   loop: "{{ __vm_remove }}"
   loop_control:
-    label: "{{ item.label }}"
+    label: "{{ item['label'] }}"
   register: __vm_gone
   no_log: true
   check_mode: false

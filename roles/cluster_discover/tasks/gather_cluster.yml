@@ -56,11 +56,11 @@
 
 - name: "gather_cluster | Read each pool's members"
   ansible.builtin.command:
-    argv: [pvesh, get, "/pools/{{ __cd_pool.poolid }}", --output-format, json]
+    argv: [pvesh, get, "/pools/{{ __cd_pool['poolid'] }}", --output-format, json]
   loop: "{{ __cd_table['/pools'] | default([]) }}"
   loop_control:
     loop_var: __cd_pool
-    label: "{{ __cd_pool.poolid }}"
+    label: "{{ __cd_pool['poolid'] }}"
   register: __cd_pool_reads
   run_once: true
   changed_when: false
@@ -89,11 +89,11 @@
 
 - name: "gather_cluster | Read each VNet's subnets"
   ansible.builtin.command:
-    argv: [pvesh, get, "/cluster/sdn/vnets/{{ __cd_vnet.vnet }}/subnets", --output-format, json]
+    argv: [pvesh, get, "/cluster/sdn/vnets/{{ __cd_vnet['vnet'] }}/subnets", --output-format, json]
   loop: "{{ __cd_sdn.vnets | default([]) }}"
   loop_control:
     loop_var: __cd_vnet
-    label: "{{ __cd_vnet.vnet }}"
+    label: "{{ __cd_vnet['vnet'] }}"
   register: __cd_subnet_reads
   run_once: true
   changed_when: false
@@ -129,58 +129,58 @@
   ansible.builtin.set_fact:
     __cd_storage: >-
       {{ __cd_storage | default([]) + [{
-           'id': __cd_st.storage,
-           'type': __cd_st.type,
-           'content': __cd_st.content | default(none),
-           'path': __cd_st.path | default(__cd_st.pool | default(__cd_st.export | default(none))),
-           'shared': (__cd_st.shared | default(0) | int) == 1,
-           'enabled': (__cd_st.disable | default(0) | int) == 0,
-           'nodes': __cd_st.nodes | default(none) }] }}
+           'id': __cd_st["storage"],
+           'type': __cd_st["type"],
+           'content': __cd_st["content"] | default(none),
+           'path': __cd_st["path"] | default(__cd_st["pool"] | default(__cd_st["export"] | default(none))),
+           'shared': (__cd_st["shared"] | default(0) | int) == 1,
+           'enabled': (__cd_st["disable"] | default(0) | int) == 0,
+           'nodes': __cd_st["nodes"] | default(none) }] }}
   loop: "{{ __cd_table['/storage'] | default([]) | sort(attribute='storage') }}"
   loop_control:
     loop_var: __cd_st
-    label: "{{ __cd_st.storage }}"
+    label: "{{ __cd_st['storage'] }}"
   run_once: true
 
 - name: "gather_cluster | Shape each corosync node record"
   ansible.builtin.set_fact:
     __cd_nodes: >-
       {{ __cd_nodes | default([]) + [{
-           'name': __cd_cn.name,
-           'id': __cd_cn.nodeid | default(none),
-           'votes': __cd_cn.quorum_votes | default(none),
-           'ip': __cd_cn.ring0_addr | default(none) }] }}
+           'name': __cd_cn["name"],
+           'id': __cd_cn["nodeid"] | default(none),
+           'votes': __cd_cn["quorum_votes"] | default(none),
+           'ip': __cd_cn["ring0_addr"] | default(none) }] }}
   loop: "{{ ((__cd_cfg_nodes.stdout | from_json) if __cd_cfg_nodes.rc == 0 else []) | sort(attribute='nodeid') }}"
   loop_control:
     loop_var: __cd_cn
-    label: "{{ __cd_cn.name }}"
+    label: "{{ __cd_cn['name'] }}"
   run_once: true
 
 - name: "gather_cluster | Shape each pool record"
   ansible.builtin.set_fact:
     __cd_pools: >-
       {{ __cd_pools | default([]) + [{
-           'id': __cd_pr.__cd_pool.poolid,
-           'comment': __cd_pr.__cd_pool.comment | default(none),
-           'members': ((__cd_pr.stdout | from_json).members | default([]) if __cd_pr.rc == 0 else [])
+           'id': __cd_pr["__cd_pool"]["poolid"],
+           'comment': __cd_pr["__cd_pool"]["comment"] | default(none),
+           'members': ((__cd_pr["stdout"] | from_json).members | default([]) if __cd_pr["rc"] == 0 else [])
                       | selectattr('vmid', 'defined') | map(attribute='vmid') | sort }] }}
   loop: "{{ __cd_pool_reads.results | default([]) }}"
   loop_control:
     loop_var: __cd_pr
-    label: "{{ __cd_pr.__cd_pool.poolid }}"
+    label: "{{ __cd_pr['__cd_pool']['poolid'] }}"
   run_once: true
 
 - name: "gather_cluster | Shape each Ceph mon record"
   ansible.builtin.set_fact:
     __cd_mons: >-
       {{ __cd_mons | default([]) + [{
-           'name': __cd_mon.name,
-           'addr': ((__cd_mon.public_addrs.addrvec | default([]) | map(attribute='addr') | list)[0]
-                    | default(__cd_mon.public_addr | default(''))) | regex_replace(':[0-9]+(/[0-9]+)?$', '') }] }}
+           'name': __cd_mon["name"],
+           'addr': ((__cd_mon["public_addrs"]["addrvec"] | default([]) | map(attribute='addr') | list)[0]
+                    | default(__cd_mon['public_addr'] | default(''))) | regex_replace(':[0-9]+(/[0-9]+)?$', '') }] }}
   loop: "{{ __cd_ceph.ceph.mon_dump.mons | default([]) | sort(attribute='name') }}"
   loop_control:
     loop_var: __cd_mon
-    label: "{{ __cd_mon.name }}"
+    label: "{{ __cd_mon['name'] }}"
   run_once: true
   when: __cd_ceph.ceph is defined
 
@@ -188,14 +188,14 @@
   ansible.builtin.set_fact:
     __cd_ceph_pools: >-
       {{ __cd_ceph_pools | default([]) + [{
-           'name': __cd_cp.pool_name,
-           'size': __cd_cp.size,
-           'min_size': __cd_cp.min_size,
-           'pg_num': __cd_cp.pg_num }] }}
+           'name': __cd_cp["pool_name"],
+           'size': __cd_cp["size"],
+           'min_size': __cd_cp["min_size"],
+           'pg_num': __cd_cp["pg_num"] }] }}
   loop: "{{ __cd_ceph.ceph.osd_pool_ls_detail | default([]) | sort(attribute='pool_name') }}"
   loop_control:
     loop_var: __cd_cp
-    label: "{{ __cd_cp.pool_name }}"
+    label: "{{ __cd_cp['pool_name'] }}"
   run_once: true
   when: __cd_ceph.ceph is defined
 

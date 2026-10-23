@@ -100,14 +100,14 @@
               {%- set out = [] -%}
               {%- set retire_names = vault_retire_entries | map(attribute='name') | list -%}
               {%- for f in __vm_listing.files -%}
-              {%-   set n = f.path | basename -%}
+              {%-   set n = f['path'] | basename -%}
               {%-   set cls = 'KEEP' if n in vault_keep_entries
                               else ('RETIRE' if n in retire_names else 'MIGRATE') -%}
               {%-   set _ = out.append({
                        'name': n,
-                       'path': f.path,
+                       'path': f["path"],
                        'label': 'sha256:' ~ (n | hash('sha256'))[:12],
-                       'sha256': f.checksum | default(''),
+                       'sha256': f["checksum"] | default(''),
                        'class': cls}) -%}
               {%- endfor -%}
               {{ out }}
@@ -118,9 +118,9 @@
             __vm_migrate: "{{ __vm_all | selectattr('class', 'eq', 'MIGRATE') | list }}"
             __vm_retire: >-
               {%- set out = [] -%}
-              {%- for e in __vm_all if e.class == 'RETIRE' -%}
+              {%- for e in __vm_all if e['class'] == 'RETIRE' -%}
               {%-   set own = (vault_retire_entries
-                               | selectattr('name', 'eq', e.name) | first) -%}
+                               | selectattr('name', 'eq', e['name']) | first) -%}
               {%-   set _ = out.append(e | combine({'ludus_own_path': own.ludus_own_path})) -%}
               {%- endfor -%}
               {{ out }}
@@ -157,12 +157,12 @@
           ansible.builtin.include_tasks: tasks/vault-retire-verify-one.yml
           loop: "{{ __vm_retire }}"
           loop_control:
-            label: "{{ item.label }}"
+            label: "{{ item['label'] }}"
         - name: "Read, encrypt, write, read back and verify each entry"
           ansible.builtin.include_tasks: tasks/vault-migrate-one.yml
           loop: "{{ __vm_migrate }}"
           loop_control:
-            label: "{{ item.label }}"
+            label: "{{ item['label'] }}"
         - name: "Report (counts and labels only)"
           ansible.builtin.debug:
             msg:

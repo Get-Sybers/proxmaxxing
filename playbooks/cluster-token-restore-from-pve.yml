@@ -2,7 +2,8 @@
 - name: "Restore proxmoxTokenSecret from token.cfg under the current DEK"
   hosts: localhost
   connection: local
-  gather_facts: false
+  gather_facts: true
+  gather_subset: ["!all", "!min", "user"]
   tasks:
     - name: "Refuse --check (this play writes credential material)"
       ansible.builtin.assert:
@@ -12,7 +13,7 @@
     - name: "Require root and the PVE token store"
       ansible.builtin.assert:
         that:
-          - (lookup('pipe', 'id -u')) == '0'
+          - ansible_facts['user_uid'] | int == 0
           - token_cfg_path is exists
         fail_msg: >-
           Must run as root on a PVE node: id 0 and {{ token_cfg_path }} both
@@ -60,7 +61,7 @@
       ansible.builtin.include_tasks: tasks/token-restore-one.yml
       loop: "{{ __tok_targets }}"
       loop_control:
-        label: "{{ item.userID }}"
+        label: "{{ item['userID'] }}"
     - name: "Summary (shape only)"
       ansible.builtin.debug:
         msg: >-

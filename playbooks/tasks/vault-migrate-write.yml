@@ -4,7 +4,7 @@
     name: get_sybers.cluster.cluster_pb_store
     tasks_from: record_write
   vars:
-    cluster_pb_store_record_name: "{{ item.name }}"
+    cluster_pb_store_record_name: "{{ item['name'] }}"
     cluster_pb_store_record_value: "{{ (__vm_ct.stdout) }}"
     cluster_pb_store_record_note: >-
       migrated from the credential vault (
