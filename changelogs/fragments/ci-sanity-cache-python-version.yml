@@ -1,0 +1,12 @@
+---
+trivial:
+  - >-
+    The CI ``ansible`` job keys its ansible-test cache (``~/.ansible/test`` and
+    ``.tox``) on the exact Python release setup-python installed, not on the
+    3.13 line alone. The sanity venv under ``~/.ansible/test`` links the
+    interpreter it was created from by absolute path, so when the runner moved
+    from Python 3.13.16 to 3.13.17 the restored venv pointed at a path that no
+    longer existed and the scheduled run of 2026-10-27 failed in
+    ``ansible-test`` with ``Required program .../bin/python not found``; every
+    later run would have hit the same cache. A new patch release now misses
+    the cache and rebuilds the venv instead.
