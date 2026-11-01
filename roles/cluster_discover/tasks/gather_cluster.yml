@@ -277,7 +277,7 @@
       public_network: "{{ __cd_conf.public_network | default(none) }}"
       cluster_network: "{{ __cd_conf.cluster_network | default(none) }}"
       mon_host: >-
-        {{ (__cd_ceph_conf_raw.content | default('') | b64decode | regex_search('(?m)^\\s*mon_host\\s*=\\s*(.+?)\\s*$', '\\1') | default([none], true))[0] }}
+        {{ (__cd_ceph_conf_raw.content | default('') | b64decode | regex_search('(?m)^\s*mon_host\s*=\s*(.+?)\s*$', '\1') | default([none], true))[0] }}
       osd_pool_default_size: "{{ __cd_conf.osd_pool_default_size | default(none) }}"
       osd_pool_default_min_size: "{{ __cd_conf.osd_pool_default_min_size | default(none) }}"
       mons: "{{ __cd_mons | default([]) }}"
