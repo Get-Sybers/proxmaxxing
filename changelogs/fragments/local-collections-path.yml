@@ -1,0 +1,11 @@
+---
+fixed:
+  - >-
+    ``ansible.cfg`` now sets ``collections_path`` to the repo-local, gitignored
+    ``.ansible/collections`` directory. With no ``collections_path`` set,
+    ``ansible-lint`` / ``ansible-compat`` and ``make deps`` installed collections
+    into the global ``~/.ansible/collections``, which then held a second copy of
+    this collection and produced ``Another version ... was found installed``
+    duplicate-collection warnings (and risked plays importing stale role code,
+    depending on search-path order). Collections now install into the project
+    tree, which ``.gitignore`` already excludes via ``/.ansible/``.
