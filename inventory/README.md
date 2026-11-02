@@ -119,6 +119,21 @@ separate Ludus-networking discovery.
 The DEK secret goes in `secrets/ludus.yml` (copy `secrets/ludus.yml.example`, encrypt with `ansible-vault`) and is passed to the install play with
 `-e @inventory/secrets/ludus.yml --ask-vault-pass`.
 
+### `proxmox_config` is the shared master, across collections
+
+`proxmox_config` is not only the Ludus seam: it is the **one master of the Proxmox-owned facts for every collection that runs against this
+inventory**. The sibling [`get_sybers.lxc`](https://github.com/get-sybers/lxc) collection shares this same inventory directory and projects from it
+exactly as `ludus_config` does — its `group_vars/all/lxc.yml` reads `proxmox_config.node` and `proxmox_config.interface` (falling back to its own
+discovered record when run on its own). The direction stays one-way: a consumer reads `proxmox_config`, never the reverse.
+
+`proxmox_config` stays a **`host_var` of the master** (so moving the master is still just moving the file). A collection whose plays run on
+`localhost`/`controller` — as both the `cluster_patch_packer_iso` play here and every `get_sybers.lxc` deploy play do — reads it as a fact of the
+master host, `hostvars[cluster_master_node].proxmox_config`, not as a bare `proxmox_config` (a host var is not in scope on `localhost`). The one
+Proxmox fact that has a `group_vars/all` home of its own, `cluster_master_node`, is read directly.
+
+`group_vars/all/proxmox_api.yml` (the `PROXMOX_*`-sourced PVE API credential and `pve_validate_certs`) is the **shared PVE API contract**: both
+collections ship the same variables, so the one shared copy serves both.
+
 ## Adding a node
 
 1. Add it to `proxmox_cluster` in `hosts.yml` (and to `proxmox_master` if it is the new master).
