@@ -18,23 +18,18 @@
   ansible.builtin.include_vars:
     file: "{{ cluster_patch_packer_iso_manifest }}"
     name: _pi_manifest
-- name: "Read the build node from config.yml"
-  ansible.builtin.slurp:
-    src: "{{ cluster_patch_packer_iso_config_path }}"
-  register: __pi_cfg
-  check_mode: false
-- name: "Derive the build node"
+- name: "Resolve the build node from its one home (cluster_master_node)"
   ansible.builtin.set_fact:
-    __pi_build_node: >-
-      {{ (__pi_cfg.content | b64decode | from_yaml).proxmox_node
-         | default((__pi_cfg.content | b64decode | from_yaml).proxmox_hostname, true) }}
+    __pi_build_node: "{{ cluster_patch_packer_iso_build_node }}"
 - name: "Assert we identified a build node"
   ansible.builtin.assert:
     that: __pi_build_node | length > 0
     fail_msg: >-
-      Could not read proxmox_node/proxmox_hostname from {{ cluster_patch_packer_iso_config_path }}.
-      Refusing to guess which node builds run on — an ISO on the wrong node cannot
-      serve a build.
+      cluster_patch_packer_iso_build_node resolved empty. It defaults to
+      cluster_master_node (the single home proxmox_config.node reads); set the
+      proxmox_master group in the inventory, or pass the build node explicitly.
+      Refusing to guess which node builds run on — an ISO on the wrong node
+      cannot serve a build.
     quiet: true
 - name: "Make held ISOs discoverable under the name Proxmox expects"
   ansible.builtin.script:
