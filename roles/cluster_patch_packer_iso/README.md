@@ -1,9 +1,9 @@
-Stops packer template builds from re-downloading ISOs the build node already holds. The role reads a sha256-keyed ISO manifest, derives the
-build node from `config.yml` (never a hardcoded node name), and hardlinks each held image under the URL-derived basename Proxmox looks for
+Stops packer template builds from re-downloading ISOs the build node already holds. The role reads a sha256-keyed ISO manifest, resolves the
+build node from `cluster_master_node` (the home `proxmox_config.node` reads; never a hardcoded node name, never re-parsed from `config.yml`), and hardlinks each held image under the URL-derived basename Proxmox looks for
 (so the native `iso_download_pve` path finds the file instead of fetching it again). A template
 whose ISO we do not hold is left downloading, never turned into a broken reference.
 
-- **Privilege:** runs as **root** on the Proxmox **build node** — it reads `/opt/ludus/config.yml`, scans the packer template trees, and links
+- **Privilege:** runs as **root** on the Proxmox **build node** — it scans the packer template trees and links
   into `/var/lib/vz/template/iso`.
 - **Collections:** `ansible.builtin` only, plus the shipped helper script `link-registered-isos.py` (run via `ansible.builtin.script`).
 - **State:** the ISO manifest must exist (ships as the collection's `meta/iso-inventory.yml`); without it the role refuses rather than guess.
@@ -12,9 +12,8 @@ whose ISO we do not hold is left downloading, never turned into a broken referen
 |---|---|---|---|
 | `cluster_patch_packer_iso_manifest` | No | `{{ role_path }}/../../meta/iso-inventory.yml` | Path to the sha256 ISO inventory; the role never guesses an ISO. |
 | `cluster_patch_packer_iso_search_paths` | No | `[/opt/ludus/packer, /opt/ludus/users]` | Both template trees that get clobbered (by `--update` and `source add --force`). |
-| `cluster_patch_packer_iso_storage_pool` | No | `local` | The Proxmox storage the ISOs live on (matches Ludus's `iso_storage_pool`). |
+| `cluster_patch_packer_iso_build_node` | No | `{{ cluster_master_node }}` | The node builds run on; the home `proxmox_config.node` reads. Never hardcoded or re-parsed from `config.yml`. |
 | `cluster_patch_packer_iso_apply` | No | `false` | Report only by default; set true to act (the template-rewrite path is superseded and refuses to write). |
-| `cluster_patch_packer_iso_config_path` | No | `/opt/ludus/config.yml` | Ludus config read at run time to derive the build node. |
 | `cluster_patch_packer_iso_iso_dir` | No | `/var/lib/vz/template/iso` | Where `local` keeps ISOs; the linker makes held images discoverable here. |
 None. The role drives an existing Ludus/Proxmox install and has no infrastructure prerequisite of its own.
 

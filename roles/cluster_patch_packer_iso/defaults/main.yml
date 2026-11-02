@@ -3,7 +3,10 @@ cluster_patch_packer_iso_manifest: "{{ role_path }}/../../meta/iso-inventory.yml
 cluster_patch_packer_iso_search_paths:
   - /opt/ludus/packer
   - /opt/ludus/users
-cluster_patch_packer_iso_storage_pool: local
+# The node builds run on — the Proxmox master. Read from its one authoritative
+# home (cluster_master_node, group_vars/all/cluster.yml), which is what
+# proxmox_config.node projects from; read it rather than re-parse the build
+# node out of Ludus's rendered config.yml.
+cluster_patch_packer_iso_build_node: "{{ cluster_master_node }}"
 cluster_patch_packer_iso_apply: false
-cluster_patch_packer_iso_config_path: /opt/ludus/config.yml
 cluster_patch_packer_iso_iso_dir: /var/lib/vz/template/iso

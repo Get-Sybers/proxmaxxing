@@ -1,0 +1,11 @@
+---
+changed:
+  - >-
+    ``cluster_patch_packer_iso`` resolves the build node from
+    ``cluster_master_node`` (the single home ``proxmox_config.node`` also reads)
+    instead of slurping and parsing ``proxmox_node``/``proxmox_hostname`` out of
+    Ludus's rendered ``/opt/ludus/config.yml``. The node is now an overridable
+    input, ``cluster_patch_packer_iso_build_node``. The unused
+    ``cluster_patch_packer_iso_storage_pool`` (declared but never referenced) and
+    ``cluster_patch_packer_iso_config_path`` (only the config.yml re-parse used
+    it) inputs are removed.
