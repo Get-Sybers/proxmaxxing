@@ -13,7 +13,7 @@
 # Proxmox-owned constant:
 #   node/storage/sdn  -> the collection vars already defined in group_vars
 #                        (cluster_master_node, sdn_vm_storage_pool, sdn_iso_storage_pool,
-#                         sdn_zone, sdn_vxlan_tag_base) and proxmox_api (pve_validate_certs)
+#                         sdn_zone, sdn_vxlan_tag_base, sdn_range_vnets) and proxmox_api (pve_validate_certs)
 #   networking        -> this host's discovered `node` record (node.mgmt_*), filled
 #                        by playbooks/cluster-discover.yml
 #
@@ -41,4 +41,8 @@ proxmox_config:
   # SDN / topology
   sdn_zone: "{{ sdn_zone }}"
   vxlan_tag_base: "{{ sdn_vxlan_tag_base }}"
+  # The per-range VNets Ludus hands out (number N -> VNet rN), the declared
+  # source of truth for a range's network, so get_sybers.lxc's range role can
+  # validate a range VNet against it rather than probe the node's live SDN.
+  sdn_range_vnets: "{{ sdn_range_vnets }}"
   cluster_mode: true              # this is a multi-node Proxmox cluster
