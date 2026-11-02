@@ -1,22 +1,36 @@
 ---
 # ansible-standards §13: the single source of pinned versions. Every galaxy.yml
-# dependency appears here pinned to one exact X.Y.Z inside its bound, and nothing
-# else in the tree carries a version literal. `scripts/upgrade_pins.py` raises
-# these to the highest release still inside the galaxy.yml bound.
+# dependency appears here pinned to one exact X.Y.Z (a git tag) inside its bound,
+# and nothing else in the tree carries a version literal. `scripts/upgrade_pins.py`
+# raises these to the highest tag still inside the galaxy.yml bound.
+#
+# Sourced from the collections' upstream GitHub repositories (git), NOT from
+# galaxy.ansible.com: the managed cloud/CI network reaches github.com but blocks
+# the Galaxy API, so a Galaxy source cannot be imported here. The git tags are the
+# same releases Galaxy serves — `ansible-galaxy collection install -r` clones each
+# at its tag (and reads the version from the cloned galaxy.yml). Verify every tag
+# with `scripts/check_pins.py --resolve-git` (`make pins`).
 collections:
-  - name: community.general
+  - name: https://github.com/ansible-collections/community.general.git
+    type: git
     version: "10.3.0"
-    source: https://galaxy.ansible.com
-  - name: ansible.posix
+  - name: https://github.com/ansible-collections/ansible.posix.git
+    type: git
     version: "1.6.2"
-    source: https://galaxy.ansible.com
-  - name: community.proxmox
+  - name: https://github.com/ansible-collections/community.proxmox.git
+    type: git
     version: "2.1.0"
-    source: https://galaxy.ansible.com
   # Test tooling, not a runtime dependency: molecule's docker driver drives the
   # Debian test container through this collection. Not a galaxy.yml dependency, so
   # check_pins reports it as a tolerated test-only pin; upgrade_pins raises it
   # within its own major.
-  - name: community.docker
+  - name: https://github.com/ansible-collections/community.docker.git
+    type: git
     version: "5.4.0"
-    source: https://galaxy.ansible.com
+  # Transitive dependency of community.docker (its inventory plugins require it).
+  # Listed explicitly so the whole closure installs from git with --no-deps and
+  # the Galaxy API is never contacted. The repo is community.library_inventory_filtering;
+  # the collection it builds is community.library_inventory_filtering_v1.
+  - name: https://github.com/ansible-collections/community.library_inventory_filtering.git
+    type: git
+    version: "1.1.5"

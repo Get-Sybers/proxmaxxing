@@ -16,7 +16,9 @@ Podman unchanged.
 | `proxmoxer`, `requests`, `ansible-lint`, `yamllint` | [`requirements-runtime.txt`](requirements-runtime.txt) |
 
 The collections are baked from `requirements.yml` — the repo's single source of
-pinned versions — so the image resolves identically to a `make deps` host setup.
+pinned versions, installed from their upstream GitHub repos at pinned tags (not
+the Galaxy API) — so the image resolves identically to a `make deps` host setup,
+even on a network that cannot reach `galaxy.ansible.com`.
 
 ## One-time setup
 
