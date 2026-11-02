@@ -1,0 +1,40 @@
+---
+# The Proxmox-owned facts the Ludus server needs, as a HOST var of the node that
+# hosts Ludus (the proxmox_master; pi-01 in this template). This is the single
+# Proxmox -> Ludus seam: host_vars/<master>/ludus_config.yml is a thin projection
+# OF this map, so a Proxmox value has exactly one home and the direction is
+# legible — ludus_config reads proxmox_config, never the reverse.
+#
+# Every value is a reference to the one authoritative home, or a genuinely
+# Proxmox-owned constant:
+#   node/storage/sdn  -> the collection vars already defined in group_vars
+#                        (cluster_master_node, sdn_vm_storage_pool, sdn_iso_storage_pool,
+#                         sdn_zone, sdn_vxlan_tag_base) and proxmox_api (pve_validate_certs)
+#   networking        -> this host's discovered `node` record (node.mgmt_*), filled
+#                        by playbooks/cluster-discover.yml
+#
+# When a different node becomes master, move this file (and ludus_config.yml) to
+# that host's host_vars/ — the values follow because they are references, and the
+# networking reads whichever node's own `node` record. Copied into place by
+# `make config`; untracked.
+proxmox_config:
+  # Identity & PVE API
+  node: "{{ cluster_master_node }}"
+  invalid_cert: "{{ not (pve_validate_certs | bool) }}"   # skip cert checks on the self-signed PVE API
+
+  # Host networking — from this node's discovered record (default IPv4 route).
+  interface: "{{ node.mgmt_interface | default('') }}"
+  local_ip: "{{ node.mgmt_ip | default('') }}"
+  public_ip: "{{ node.mgmt_ip | default('') }}"
+  gateway: "{{ node.mgmt_gateway | default('') }}"
+  netmask: "{{ node.mgmt_netmask | default('') }}"
+
+  # Storage — the pools ranges already use (group_vars/proxmox_cluster/sdn.yml).
+  vm_storage_pool: "{{ sdn_vm_storage_pool }}"
+  vm_storage_format: raw          # Ceph RBD / ZFS require raw (not qcow2) — a Proxmox storage constraint
+  iso_storage_pool: "{{ sdn_iso_storage_pool }}"
+
+  # SDN / topology
+  sdn_zone: "{{ sdn_zone }}"
+  vxlan_tag_base: "{{ sdn_vxlan_tag_base }}"
+  cluster_mode: true              # this is a multi-node Proxmox cluster

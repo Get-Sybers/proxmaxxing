@@ -136,6 +136,9 @@
     cluster_discover_node_facts:
       name: "{{ inventory_hostname }}"
       mgmt_ip: "{{ __cd_me.ring0_addr | default(none) }}"
+      mgmt_interface: "{{ ansible_facts['default_ipv4']['interface'] | default(none) }}"
+      mgmt_gateway: "{{ ansible_facts['default_ipv4']['gateway'] | default(none) }}"
+      mgmt_netmask: "{{ ansible_facts['default_ipv4']['netmask'] | default(none) }}"
       corosync_id: "{{ __cd_me.nodeid | default(none) }}"
       quorum_votes: "{{ __cd_me.quorum_votes | default(none) }}"
       pve_version: "pve-manager/{{ __cd_ver.version }}/{{ __cd_ver.repoid }}"
