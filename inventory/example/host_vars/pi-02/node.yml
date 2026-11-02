@@ -15,6 +15,9 @@
 node:
   name: pi-02
   mgmt_ip: 192.0.2.11
+  mgmt_interface: ""
+  mgmt_gateway: ""
+  mgmt_netmask: ""
   hardware: {}
   disks: []
   zfs_pools: []

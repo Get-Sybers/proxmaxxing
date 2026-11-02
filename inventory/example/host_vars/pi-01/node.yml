@@ -5,8 +5,10 @@
 # structure and the one value the plays need before the first discovery run,
 # mgmt_ip (ansible_host is read from it; 192.0.2.0/24 is an RFC 5737
 # documentation range standing in for your management LAN). Discovery adds the
-# corosync id and votes, the PVE version and kernel, the hardware, disks, ZFS
-# pools, Ceph roles, interfaces and guests. A fill run (the default) keeps
+# corosync id and votes, the management interface/gateway/netmask (from the
+# default IPv4 route — the master's proxmox_config.yml references these), the PVE
+# version and kernel, the hardware, disks, ZFS pools, Ceph roles, interfaces and
+# guests. A fill run (the default) keeps
 # every value already here and adds what the node reports; an overwrite run
 # (-e cluster_discover_overwrite=true) replaces the discovered values and keeps
 # the annotations the node cannot report (a disk's role, an interface's
@@ -15,6 +17,9 @@
 node:
   name: pi-01
   mgmt_ip: 192.0.2.10
+  mgmt_interface: ""
+  mgmt_gateway: ""
+  mgmt_netmask: ""
   hardware: {}
   disks: []
   zfs_pools: []

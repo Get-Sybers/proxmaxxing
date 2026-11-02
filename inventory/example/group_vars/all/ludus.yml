@@ -45,19 +45,15 @@ ludus_user_collections_path: >-
 reconcile_noaccess_pools: []
 reconcile_verify_vault_invariant: false
 
-# --- Ludus server config.yml: the shared (cluster-wide) building blocks ------
-# The values of /opt/ludus/config.yml that are the same on any node that could
-# host the Ludus server live here, in group_vars, as the one place they are set.
-# The master's host_vars/<master>/ludus_config.yml assembles them (plus the
-# host-specific network values and the cross-references ceph_pool, sdn_zone,
-# cluster_master_node and ludus_reserved_range_numbers) into the `ludus_config`
-# map the cluster_ludus_install role reconciles. Change a value here and it
-# changes for whichever node is master — no node name is baked in.
-ludus_cfg_proxmox_invalid_cert: true       # skip cert checks on the PVE API (self-signed)
-ludus_cfg_vm_storage_format: raw           # Ceph RBD and ZFS require raw (not qcow2)
-ludus_cfg_iso_storage_pool: local          # where template ISOs download to (RBD cannot hold ISOs)
+# --- Ludus server config.yml: the Ludus-OWNED building blocks ----------------
+# The /opt/ludus/config.yml values that Ludus itself owns (ports, licence, access
+# policy, the NAT interface Ludus creates, log retention) live here, in group_vars,
+# as the one place they are set. The Proxmox-owned values (node, networking,
+# storage pools, SDN zone, cert handling) are NOT here — they live in the master's
+# host_vars/<master>/proxmox_config.yml. The master's ludus_config.yml is a thin
+# projection OF proxmox_config plus these ludus_cfg_* values. Change a value here
+# and it changes for whichever node is master — no node name is baked in.
 ludus_cfg_nat_interface: ludus             # the WAN interface Ludus creates on the host for range routers
-ludus_cfg_cluster_mode: true               # this is a multi-node Proxmox cluster
 ludus_cfg_prevent_user_ansible_add: false  # true stops non-admins adding Ansible roles/collections
 ludus_cfg_sso_require_existing_user: true  # SSO email must match an existing account (false auto-creates)
 ludus_cfg_create_default_range: true       # create a default range for each new user (incl. SSO)

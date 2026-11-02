@@ -1,6 +1,6 @@
 Stands up and then idempotently reconciles a Ludus server on a Proxmox cluster node. On a host that already has Ludus it is purely a converger:
-it reads `/opt/ludus/config.yml` and reconciles it from the single `ludus_config` map (the master's `host_vars/<master>/ludus_config.yml`, assembled
-by reference from the `ludus_cfg_*` group vars and the cluster's `ceph_pool` / `sdn_zone` / `cluster_master_node` / `ludus_reserved_range_numbers`),
+it reads `/opt/ludus/config.yml` and reconciles it from the single `ludus_config` map (the master's `host_vars/<master>/ludus_config.yml`, a thin
+projection OF `proxmox_config` for the Proxmox-owned keys plus the `ludus_cfg_*` group vars for the Ludus-owned ones),
 stages the ROOT API key into the house credential store, and verifies the services and the on-disk result — a second run is `changed=0`. On a host
 with no install it refuses by default; with `cluster_ludus_install_run_installer=true` it downloads the official `ludus-server` binary and runs it
 non-interactively (on an *existing* Proxmox host Ludus installs without a reboot), then reconciles.
@@ -12,7 +12,7 @@ skipped so the installer's own value is kept). Two sets are special:
   asserts each configured secret already matches it (so a wrong vaulted value refuses the run rather than bricking the credential store), and leaves it
   untouched. It also captures `database_encryption_key` before any edit and asserts it unchanged after.
 - **Host network keys** (`cluster_ludus_install_network_keys`) are reconciled only when `cluster_ludus_install_manage_network` is set — the working
-  Ceph-mesh network is not restyled by a guess (run-sheet caution C1). Fill them from the live host with `playbooks/ludus-config-discover.yml`.
+  Ceph-mesh network is not restyled by a guess (run-sheet caution C1). They come from `proxmox_config`, which reads the `node` record filled by `playbooks/cluster-discover.yml`.
 
 - **Privilege:** runs as **root** on the Ludus/Proxmox node — it writes under `/opt/ludus`, stages a key under `/root`, and restarts systemd units.
 - **Collections:** `ansible.builtin` only.
@@ -30,7 +30,7 @@ skipped so the installer's own value is kept). Two sets are special:
 | `cluster_ludus_install_config_fallback` | No | *(safe cluster-mode skeleton)* | Used when no `ludus_config` is defined; its site values reference `cluster_master_node`, `ceph_pool`, `sdn_zone`, `sdn_vxlan_tag_base` and `ludus_reserved_range_numbers` (each guarded). |
 | `cluster_ludus_install_secret_keys` | No | `[database_encryption_key]` | Keys verified against the live config and NEVER rewritten. |
 | `cluster_ludus_install_manage_network` | No | `false` | Also reconcile the host network keys below. |
-| `cluster_ludus_install_network_keys` | No | `[proxmox_interface, proxmox_local_ip, proxmox_public_ip, proxmox_gateway, proxmox_netmask]` | The host network keys, written only when `manage_network`. Filled by `playbooks/ludus-config-discover.yml`. |
+| `cluster_ludus_install_network_keys` | No | `[proxmox_interface, proxmox_local_ip, proxmox_public_ip, proxmox_gateway, proxmox_netmask]` | The host network keys, written only when `manage_network`. Come from `proxmox_config` (the `node` record filled by `cluster-discover`). |
 | `cluster_ludus_install_stage_root_key` | No | `true` | Stage `install/root-api-key` into the house credential store. |
 | `cluster_ludus_install_vault_dir` | No | `/root/ludus-credentials` | Credential-store dir the ROOT key is staged into (as `ROOT.apikey`). |
 | `cluster_ludus_install_verify_whoami` | No | `false` | Prove an exported `LUDUS_API_KEY` authenticates at `/whoami`. |

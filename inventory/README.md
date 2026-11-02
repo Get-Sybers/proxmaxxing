@@ -27,11 +27,11 @@ inventory/
 │       ├── node.yml               #     As-Is skeleton — FILLED BY playbooks/cluster-discover.yml
 │       ├── storage_net.yml        #     desired fast-storage links
 │       ├── sdn.yml                #     (master only) the NAT uplink
-│       ├── ludus_config.yml       #     (master only) the whole Ludus server config.yml, assembled from references
-│       └── ludus_net.yml          #     (master only) its host network values — FILLED BY playbooks/ludus-config-discover.yml
+│       ├── proxmox_config.yml     #     (master only) the Proxmox-owned facts Ludus needs (references node + group_vars)
+│       └── ludus_config.yml       #     (master only) the Ludus server config.yml — a thin projection OF proxmox_config
 ├── hosts.yml                      # untracked — your copy
 ├── group_vars/, host_vars/        # untracked — your copies
-├── discovered/                    # untracked — proposal files cluster-discover.yml / ludus-config-discover.yml write by default; never loaded
+├── discovered/                    # untracked — proposal files cluster-discover.yml writes by default; never loaded
 └── secrets/                       # vaulted -e files (ludus.yml for the DEK; see secrets/README.md); never loaded as inventory
 ```
 
@@ -89,31 +89,32 @@ values. Annotations the node cannot report — a disk's `role`, an interface's p
 cluster's objects are merged on their identity (`dev`, `name`, `id`, ...), not by position. The role README
 ([`roles/cluster_discover`](../roles/cluster_discover/README.md)) lists every key.
 
-## The Ludus server config.yml
+## The Ludus server config.yml — a projection of the Proxmox config
 
-`/opt/ludus/config.yml` is expressed once, as the `ludus_config` map in **`host_vars/<master>/ludus_config.yml`** — it is a host fact (it names
-*this* node's Proxmox identity and networking), so it lives in the master's `host_vars`, not in a group. Every value in the map is a reference,
-so a fact has exactly one home:
+`/opt/ludus/config.yml` is expressed once, and its values flow **one direction**: `proxmox_config → ludus_config`. Both are host vars of the
+`proxmox_master` (it is the node that hosts Ludus), and every variable name starts with its **owner**, so each line reads which way the fact flows.
 
-- shared options → the `ludus_cfg_*` variables in `group_vars/all/ludus.yml` (ports, licence, storage format, policy flags, …);
-- cross-cutting facts → their existing home (`cluster_master_node`, `ceph_pool`, `sdn_zone`, `sdn_vxlan_tag_base`, `ludus_reserved_range_numbers`);
-- host networking → `host_vars/<master>/ludus_net.yml` (see below);
-- the secret `database_encryption_key` → the ansible-vault file `secrets/ludus.yml` (`vault_ludus_database_encryption_key`).
+**`host_vars/<master>/proxmox_config.yml`** owns the Proxmox→Ludus seam — the Proxmox facts Ludus needs, each a reference to its one home:
 
-`playbooks/ludus-server-install.yml` (role `cluster_ludus_install`) reconciles the live `config.yml` from this map: it writes every key whose
+- `node` ← `cluster_master_node`; `invalid_cert` ← `not pve_validate_certs` (`group_vars/all/proxmox_api.yml`);
+- `vm_storage_pool` / `iso_storage_pool` ← `sdn_vm_storage_pool` / `sdn_iso_storage_pool`, `sdn_zone`, `vxlan_tag_base` ← `sdn_vxlan_tag_base` (`group_vars/proxmox_cluster/sdn.yml`);
+- `interface` / `local_ip` / `public_ip` / `gateway` / `netmask` ← this host's discovered `node` record (`node.mgmt_*`, filled by `cluster-discover.yml`);
+- `vm_storage_format: raw` and `cluster_mode: true` are genuine Proxmox-owned constants.
+
+**`host_vars/<master>/ludus_config.yml`** is a thin **projection OF** `proxmox_config`: each Proxmox-derived key reads `"{{ proxmox_config.* }}"`. The
+only values it owns are genuinely Ludus's — the ports, licence, access policy, the NAT interface Ludus creates, `max_log_history` (the `ludus_cfg_*`
+vars in `group_vars/all/ludus.yml`), the `reserved_range_numbers`, and the secret `database_encryption_key` (the ansible-vault file
+`secrets/ludus.yml`, `vault_ludus_database_encryption_key`).
+
+`playbooks/ludus-server-install.yml` (role `cluster_ludus_install`) reconciles the live `config.yml` from `ludus_config`: it writes every key whose
 resolved value is non-empty, **never rewrites `database_encryption_key`** (it only asserts the running key matches the vaulted one), and touches the
-host network keys only when `cluster_ludus_install_manage_network=true`. Change a value in `group_vars` and it changes for whichever node is master;
-move `ludus_config.yml` / `ludus_net.yml` to the new master's `host_vars/` and the references follow, because nothing is a literal.
+host network keys only when `cluster_ludus_install_manage_network=true`. Nothing is a literal, so moving the master is just moving
+`proxmox_config.yml` and `ludus_config.yml` to the new master's `host_vars/` — the networking follows because `proxmox_config` reads whichever node's
+own `node` record.
 
-`ludus_net.yml` (`ludus_net_interface`, `_local_ip`, `_public_ip`, `_gateway`, `_netmask`) is **discovered state** — fill it from the live host with
-`playbooks/ludus-config-discover.yml` (the interface carrying the default route, its address/netmask and the gateway), the same way `node.yml` is
-filled:
-
-```sh
-ansible-playbook playbooks/ludus-config-discover.yml                                          # proposal under discovered/ — diff, then adopt
-ansible-playbook playbooks/ludus-config-discover.yml --check --diff                           # what would be written, nothing changed
-ansible-playbook playbooks/ludus-config-discover.yml -e cluster_ludus_config_discover_write=in_place   # rewrite ludus_net.yml here
-```
+The host networking comes from the one discovery that already runs on every node — `cluster-discover.yml` records `node.mgmt_interface`,
+`node.mgmt_gateway` and `node.mgmt_netmask` (from the default IPv4 route) into the node record, which `proxmox_config` references. There is no
+separate Ludus-networking discovery.
 
 The DEK secret goes in `secrets/ludus.yml` (copy `secrets/ludus.yml.example`, encrypt with `ansible-vault`) and is passed to the install play with
 `-e @inventory/secrets/ludus.yml --ask-vault-pass`.

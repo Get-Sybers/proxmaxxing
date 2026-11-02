@@ -1,38 +1,34 @@
 ---
 added:
   - >-
-    The whole Ludus server ``config.yml`` is now expressed once as the
-    ``ludus_config`` map in the master's ``host_vars/<master>/ludus_config.yml``
-    (a host fact — it names this node's Proxmox identity and networking). Every
-    value is a reference: the shared options to the new ``ludus_cfg_*`` building
-    blocks in ``group_vars/all/ludus.yml``, the cross-cutting facts to their one
-    home (``cluster_master_node``, ``ceph_pool``, ``sdn_zone``,
-    ``sdn_vxlan_tag_base``, ``ludus_reserved_range_numbers``), the host network
-    to ``host_vars/<master>/ludus_net.yml`` and the secret
-    ``database_encryption_key`` to the ansible-vault file
-    ``inventory/secrets/ludus.yml`` (``vault_ludus_database_encryption_key``, see
-    its ``.example``). ``inventory/example`` ships ``ludus_config.yml`` and
-    ``ludus_net.yml`` for the master and the ``secrets/ludus.yml.example``.
+    The whole Ludus server ``config.yml`` is expressed once as two owner-named
+    host-var maps on the ``proxmox_master``, with values flowing one direction
+    (``proxmox_config`` -> ``ludus_config``). ``host_vars/<master>/proxmox_config.yml``
+    owns the Proxmox facts Ludus needs, each a reference to its one home
+    (``cluster_master_node``; ``pve_validate_certs``; ``sdn_vm_storage_pool`` /
+    ``sdn_iso_storage_pool`` / ``sdn_zone`` / ``sdn_vxlan_tag_base``; and the host
+    networking from the discovered ``node`` record). ``host_vars/<master>/ludus_config.yml``
+    is a thin projection OF ``proxmox_config`` — every Proxmox-derived key reads
+    ``{{ proxmox_config.* }}`` — plus the Ludus-owned ``ludus_cfg_*`` values in
+    ``group_vars/all/ludus.yml`` and the vaulted ``database_encryption_key``
+    (``inventory/secrets/ludus.yml``, split vars/vault). ``inventory/example``
+    ships ``proxmox_config.yml`` / ``ludus_config.yml`` for the master and
+    ``secrets/ludus.yml.example``.
   - >-
-    New role ``cluster_ludus_config_discover`` and play ``ludus-config-discover``
-    — gather the Ludus host's networking from the live node (the interface
-    carrying the default route, its address and netmask, and the gateway) and
-    fill ``host_vars/<master>/ludus_net.yml``, the same As-Is way
-    ``cluster-discover`` fills ``node.yml``: a proposal under
-    ``inventory/discovered/`` by default, ``in_place`` on opt-in, a drift report
-    under ``--check --diff``.
+    ``cluster_discover`` now records the management interface, gateway and netmask
+    (``node.mgmt_interface`` / ``mgmt_gateway`` / ``mgmt_netmask``, from the default
+    IPv4 route) in each node's record, so the Ludus host networking is filled by the
+    one discovery that already runs on every node — no separate Ludus-networking play.
 changed:
   - >-
-    ``cluster_ludus_install`` reconciles ``/opt/ludus/config.yml`` from the single
-    ``ludus_config`` map instead of a fixed per-key input list: it writes every
-    key in the map whose resolved value is non-empty (booleans lowercased,
-    lists/dicts as JSON). The secret keys
-    (``cluster_ludus_install_secret_keys``, default ``database_encryption_key``)
-    are asserted to match the running server and NEVER rewritten, so a wrong
-    vaulted value refuses the run instead of bricking the credential store; the
-    host network keys are still written only when
-    ``cluster_ludus_install_manage_network=true``. The per-key inputs
-    (``cluster_ludus_install_vm_storage_pool`` / ``_vm_storage_format`` /
-    ``_iso_storage_pool`` / ``_reserved_range_numbers`` / ``_cluster_mode`` /
-    ``_sdn_zone`` / ``_vxlan_tag_base`` / ``_proxmox_node`` and the ``_net_*``
-    set) are superseded by the map and its ``_config_fallback`` skeleton.
+    New role ``cluster_ludus_install`` and play ``ludus-server-install`` stand up a
+    Ludus server on a Proxmox cluster node and idempotently reconcile
+    ``/opt/ludus/config.yml`` from the ``ludus_config`` map: every key whose resolved
+    value is non-empty is written (booleans lowercased, lists as JSON). Secret keys
+    (``cluster_ludus_install_secret_keys``, default ``database_encryption_key``) are
+    asserted to match the running server and NEVER rewritten, so a wrong vaulted value
+    refuses the run instead of bricking the credential store; the host network keys are
+    written only when ``cluster_ludus_install_manage_network=true``. On a host with no
+    install the role refuses unless ``cluster_ludus_install_run_installer=true``, in
+    which case it downloads and runs ``ludus-server --no-prompt``. A second run is
+    ``changed=0``.

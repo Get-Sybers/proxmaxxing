@@ -7,12 +7,13 @@ cluster_ludus_install_binary_checksum: ""
 cluster_ludus_install_version: ""
 
 # The config.yml this role reconciles, as ONE map. The master's `ludus_config`
-# host var (host_vars/<master>/ludus_config.yml) is the source of truth; its
-# values reference the group_vars the inventory already defines (ludus_cfg_*,
-# ceph_pool, sdn_zone, cluster_master_node, ...) so a fact has exactly one home.
-# When `ludus_config`
-# is undefined the role falls back to the safe cluster-mode skeleton below (the
-# same site references, each guarded). Every key in the map is reconciled onto
+# host var (host_vars/<master>/ludus_config.yml) is the source of truth; it is a
+# thin projection OF proxmox_config (the Proxmox-owned facts) plus the ludus_cfg_*
+# group vars (the Ludus-owned ones), so a fact has exactly one home. When
+# `ludus_config`
+# is undefined the role falls back to the safe cluster-mode skeleton below, whose
+# site values reference the collection vars directly (each guarded; the skeleton
+# cannot reach the inventory's proxmox_config). Every key in the map is reconciled onto
 # /opt/ludus/config.yml EXCEPT the secret and host-network keys handled specially
 # (see below); keys whose value is empty or null are skipped so the installer's
 # own value is kept.
@@ -36,8 +37,8 @@ cluster_ludus_install_secret_keys:
 
 # Host NETWORK keys: reconciled ONLY when cluster_ludus_install_manage_network is
 # true. Default false so the working (Ceph-mesh) network is never restyled by a
-# wrong guess (run-sheet caution C1). Their values come from the same map,
-# filled by playbooks/ludus-config-discover.yml.
+# wrong guess (run-sheet caution C1). Their values come from the same map
+# (proxmox_config, which reads the node record filled by playbooks/cluster-discover.yml).
 cluster_ludus_install_manage_network: false
 cluster_ludus_install_network_keys:
   - proxmox_interface

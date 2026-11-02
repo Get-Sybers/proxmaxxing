@@ -102,7 +102,7 @@ argument_specs:
         description: >-
           The host network keys of C(config.yml), reconciled only when
           O(cluster_ludus_install_manage_network) is true. Filled from the live
-          host by C(playbooks/ludus-config-discover.yml).
+          node record (node.mgmt_*) by C(playbooks/cluster-discover.yml), via proxmox_config.
       cluster_ludus_install_stage_root_key:
         type: bool
         required: false
