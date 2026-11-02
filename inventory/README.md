@@ -97,7 +97,7 @@ cluster's objects are merged on their identity (`dev`, `name`, `id`, ...), not b
 **`host_vars/<master>/proxmox_config.yml`** owns the Proxmox→Ludus seam — the Proxmox facts Ludus needs, each a reference to its one home:
 
 - `node` ← `cluster_master_node`; `invalid_cert` ← `not pve_validate_certs` (`group_vars/all/proxmox_api.yml`);
-- `vm_storage_pool` / `iso_storage_pool` ← `sdn_vm_storage_pool` / `sdn_iso_storage_pool`, `sdn_zone`, `vxlan_tag_base` ← `sdn_vxlan_tag_base`, `sdn_range_vnets` (the per-range VNets `get_sybers.lxc`'s range role reads) (`group_vars/proxmox_cluster/sdn.yml`);
+- `vm_storage_pool` ← `sdn_vm_storage_pool`, `iso_storage_pool` ← `sdn_iso_storage_pool`, `sdn_zone` ← `sdn_zone`, `vxlan_tag_base` ← `sdn_vxlan_tag_base`, `sdn_range_vnets` ← `sdn_range_vnets` (the per-range VNets `get_sybers.lxc`'s range role reads) — all `group_vars/proxmox_cluster/sdn.yml`;
 - `interface` / `local_ip` / `public_ip` / `gateway` / `netmask` ← this host's discovered `node` record (`node.mgmt_*`, filled by `cluster-discover.yml`);
 - `vm_storage_format: raw` and `cluster_mode: true` are genuine Proxmox-owned constants.
 

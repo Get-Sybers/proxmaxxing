@@ -42,7 +42,7 @@ proxmox_config:
   sdn_zone: "{{ sdn_zone }}"
   vxlan_tag_base: "{{ sdn_vxlan_tag_base }}"
   # The per-range VNets Ludus hands out (number N -> VNet rN), the declared
-  # source of truth for a range's network; get_sybers.lxc's range role reads
-  # this to validate a range VNet instead of probing the node's live SDN.
+  # source of truth for a range's network, so get_sybers.lxc's range role can
+  # validate a range VNet against it rather than probe the node's live SDN.
   sdn_range_vnets: "{{ sdn_range_vnets }}"
   cluster_mode: true              # this is a multi-node Proxmox cluster
