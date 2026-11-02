@@ -1,0 +1,38 @@
+---
+added:
+  - >-
+    The whole Ludus server ``config.yml`` is now expressed once as the
+    ``ludus_config`` map in the master's ``host_vars/<master>/ludus_config.yml``
+    (a host fact — it names this node's Proxmox identity and networking). Every
+    value is a reference: the shared options to the new ``ludus_cfg_*`` building
+    blocks in ``group_vars/all/ludus.yml``, the cross-cutting facts to their one
+    home (``cluster_master_node``, ``ceph_pool``, ``sdn_zone``,
+    ``sdn_vxlan_tag_base``, ``ludus_reserved_range_numbers``), the host network
+    to ``host_vars/<master>/ludus_net.yml`` and the secret
+    ``database_encryption_key`` to the ansible-vault file
+    ``inventory/secrets/ludus.yml`` (``vault_ludus_database_encryption_key``, see
+    its ``.example``). ``inventory/example`` ships ``ludus_config.yml`` and
+    ``ludus_net.yml`` for the master and the ``secrets/ludus.yml.example``.
+  - >-
+    New role ``cluster_ludus_config_discover`` and play ``ludus-config-discover``
+    — gather the Ludus host's networking from the live node (the interface
+    carrying the default route, its address and netmask, and the gateway) and
+    fill ``host_vars/<master>/ludus_net.yml``, the same As-Is way
+    ``cluster-discover`` fills ``node.yml``: a proposal under
+    ``inventory/discovered/`` by default, ``in_place`` on opt-in, a drift report
+    under ``--check --diff``.
+changed:
+  - >-
+    ``cluster_ludus_install`` reconciles ``/opt/ludus/config.yml`` from the single
+    ``ludus_config`` map instead of a fixed per-key input list: it writes every
+    key in the map whose resolved value is non-empty (booleans lowercased,
+    lists/dicts as JSON). The secret keys
+    (``cluster_ludus_install_secret_keys``, default ``database_encryption_key``)
+    are asserted to match the running server and NEVER rewritten, so a wrong
+    vaulted value refuses the run instead of bricking the credential store; the
+    host network keys are still written only when
+    ``cluster_ludus_install_manage_network=true``. The per-key inputs
+    (``cluster_ludus_install_vm_storage_pool`` / ``_vm_storage_format`` /
+    ``_iso_storage_pool`` / ``_reserved_range_numbers`` / ``_cluster_mode`` /
+    ``_sdn_zone`` / ``_vxlan_tag_base`` / ``_proxmox_node`` and the ``_net_*``
+    set) are superseded by the map and its ``_config_fallback`` skeleton.

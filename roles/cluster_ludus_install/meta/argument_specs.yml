@@ -5,16 +5,20 @@ argument_specs:
     description:
       - >-
         Ensures the Ludus install at O(cluster_ludus_install_root) is present and
-        that the SAFE keys of its C(config.yml) match this cluster (shared Ceph
-        storage with the C(raw) format, cluster mode, the SDN zone, and the
-        reserved range number). Never rewrites C(database_encryption_key); the
-        host network keys are reconciled only on explicit opt-in. Stages the ROOT
-        API key into the house credential store and verifies the result. A
-        second run reports C(changed=0).
+        that its C(config.yml) matches the single C(ludus_config) map the
+        inventory declares (the master's host_vars/<master>/ludus_config.yml).
+        Every key in the
+        map is reconciled onto C(config.yml) except the secret keys (verified
+        against the running server but never rewritten) and the host network keys
+        (reconciled only on explicit opt-in). Stages the ROOT API key into the
+        house credential store and verifies the result. A second run reports
+        C(changed=0).
       - >-
-        The managed-key manifest in C(vars/main.yml)
-        (C(cluster_ludus_install_managed_keys), C(cluster_ludus_install_network_keys))
-        is role-internal data, not an input.
+        O(cluster_ludus_install_config) defaults to the inventory's C(ludus_config)
+        and falls back to a safe cluster-mode skeleton whose site values reference
+        the collection variables the inventory defines (standards §4d). A key
+        whose value is empty or null is skipped, so the installer's own value is
+        kept.
     options:
       cluster_ludus_install_root:
         type: str
@@ -49,76 +53,56 @@ argument_specs:
         required: false
         default: ""
         description: "Expected Ludus server version string; when set, the role asserts C(ludus version) reports it."
-      cluster_ludus_install_vm_storage_pool:
-        type: str
+      cluster_ludus_install_config:
+        type: dict
         required: false
-        default: "{{ ceph_pool }}"
-        description: "C(proxmox_vm_storage_pool) to enforce — the cluster-shared pool VMs are cloned onto (the inventory's ceph_pool)."
-      cluster_ludus_install_vm_storage_format:
-        type: str
+        default: "{{ ludus_config | default(cluster_ludus_install_config_fallback) }}"
+        description:
+          - >-
+            The C(config.yml) keys to reconcile, as ONE map — the master's
+            C(ludus_config) host var is the source of truth. Keys are written verbatim as
+            C(config.yml) scalars (booleans lowercased, lists/dicts as JSON);
+            empty or null values are skipped.
+          - >-
+            Secret keys (O(cluster_ludus_install_secret_keys)) are only verified,
+            never written; host network keys (O(cluster_ludus_install_network_keys))
+            are written only when O(cluster_ludus_install_manage_network) is true.
+      cluster_ludus_install_config_fallback:
+        type: dict
         required: false
-        default: "raw"
-        description: "C(proxmox_vm_storage_format) to enforce — Ceph RBD and ZFS require C(raw), not qcow2."
-      cluster_ludus_install_iso_storage_pool:
-        type: str
-        required: false
-        default: "local"
-        description: "C(proxmox_iso_storage_pool) to enforce (RBD cannot hold ISOs; keep a node-local/shared store)."
-      cluster_ludus_install_reserved_range_numbers:
+        description:
+          - >-
+            The safe cluster-mode skeleton used when the inventory defines no
+            C(ludus_config). Its site values reference C(cluster_master_node),
+            C(ceph_pool), C(sdn_zone), C(sdn_vxlan_tag_base) and
+            C(ludus_reserved_range_numbers) (each guarded), so defaults name no
+            site fact (standards §4d).
+      cluster_ludus_install_secret_keys:
         type: list
-        elements: int
+        elements: str
         required: false
-        default: "{{ ludus_reserved_range_numbers }}"
+        default: [database_encryption_key]
         description: >-
-          C(reserved_range_numbers) to enforce — numbers whose 10.N.0.0/16 would
-          collide with the cluster's own nets (the inventory's ludus_reserved_range_numbers).
-      cluster_ludus_install_cluster_mode:
-        type: bool
-        required: false
-        default: true
-        description: "C(cluster_mode) to enforce (this is a multi-node Proxmox cluster)."
-      cluster_ludus_install_sdn_zone:
-        type: str
-        required: false
-        default: "{{ sdn_zone }}"
-        description: "C(sdn_zone) to enforce — the VXLAN zone Ludus uses for the ludusnat and per-range VNets in cluster mode (the inventory's sdn_zone)."
-      cluster_ludus_install_vxlan_tag_base:
-        type: int
-        required: false
-        default: 0
-        description: "C(vxlan_tag_base) to enforce (each range VNet tag = base + range number)."
-      cluster_ludus_install_proxmox_node:
-        type: str
-        required: false
-        default: "{{ inventory_hostname }}"
-        description: "C(proxmox_node) to enforce — the Proxmox node name of this Ludus host."
+          C(config.yml) keys that are secrets: the role asserts the live value
+          matches the one in the map (when set) and NEVER rewrites it, so a wrong
+          value cannot brick the credential store.
       cluster_ludus_install_manage_network:
         type: bool
         required: false
         default: false
         description: >-
-          When true, also reconcile the host network keys below. Default false so
-          the working (Ceph-mesh) network is never restyled by a wrong guess.
-      cluster_ludus_install_net_interface:
-        type: str
+          When true, also reconcile the host network keys
+          (O(cluster_ludus_install_network_keys)). Default false so the working
+          (Ceph-mesh) network is never restyled by a wrong guess.
+      cluster_ludus_install_network_keys:
+        type: list
+        elements: str
         required: false
-        default: ""
-        description: "C(proxmox_interface) to enforce (only when O(cluster_ludus_install_manage_network))."
-      cluster_ludus_install_net_local_ip:
-        type: str
-        required: false
-        default: ""
-        description: "C(proxmox_local_ip) to enforce (only when O(cluster_ludus_install_manage_network))."
-      cluster_ludus_install_net_gateway:
-        type: str
-        required: false
-        default: ""
-        description: "C(proxmox_gateway) to enforce (only when O(cluster_ludus_install_manage_network))."
-      cluster_ludus_install_net_netmask:
-        type: str
-        required: false
-        default: ""
-        description: "C(proxmox_netmask) to enforce (only when O(cluster_ludus_install_manage_network))."
+        default: [proxmox_interface, proxmox_local_ip, proxmox_public_ip, proxmox_gateway, proxmox_netmask]
+        description: >-
+          The host network keys of C(config.yml), reconciled only when
+          O(cluster_ludus_install_manage_network) is true. Filled from the live
+          host by C(playbooks/ludus-config-discover.yml).
       cluster_ludus_install_stage_root_key:
         type: bool
         required: false

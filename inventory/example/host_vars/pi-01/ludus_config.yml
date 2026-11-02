@@ -1,0 +1,61 @@
+---
+# The Ludus server's config.yml, assembled as a HOST var of the node that hosts
+# Ludus (the proxmox_master; pi-01 in this template). This is the one place the
+# whole config.yml is expressed, and every value is a reference — nothing is
+# re-typed:
+#   - the shared options to group_vars (ludus_cfg_* in group_vars/all/ludus.yml);
+#   - the cross-cutting facts to their one home (cluster_master_node, ceph_pool,
+#     sdn_zone, sdn_vxlan_tag_base, ludus_reserved_range_numbers);
+#   - the host networking to this directory's ludus_net.yml;
+#   - the secret to the ansible-vault file inventory/secrets/ludus.yml
+#     (vault_ludus_database_encryption_key).
+#
+# cluster_ludus_install reconciles /opt/ludus/config.yml from this map. A key
+# whose resolved value is empty is skipped, so the installer's own value is kept.
+# The role NEVER rewrites a live database_encryption_key (it only verifies it),
+# and the host network keys are written only when
+# cluster_ludus_install_manage_network is true.
+#
+# When a different node becomes master, move this file (and ludus_net.yml) to
+# that host's host_vars/ directory — the values follow because they are
+# references, not literals. Copied into place by `make config`; untracked.
+ludus_config:
+  # --- Identity & API to Proxmox --------------------------------------------
+  proxmox_node: "{{ cluster_master_node }}"
+  proxmox_invalid_cert: "{{ ludus_cfg_proxmox_invalid_cert }}"
+
+  # --- Host networking (this directory's ludus_net.yml) ----------------------
+  proxmox_interface: "{{ ludus_net_interface }}"
+  proxmox_local_ip: "{{ ludus_net_local_ip }}"
+  proxmox_public_ip: "{{ ludus_net_public_ip }}"
+  proxmox_gateway: "{{ ludus_net_gateway }}"
+  proxmox_netmask: "{{ ludus_net_netmask }}"
+
+  # --- Storage ---------------------------------------------------------------
+  proxmox_vm_storage_pool: "{{ ceph_pool }}"
+  proxmox_vm_storage_format: "{{ ludus_cfg_vm_storage_format }}"
+  proxmox_iso_storage_pool: "{{ ludus_cfg_iso_storage_pool }}"
+
+  # --- Range networking ------------------------------------------------------
+  ludus_nat_interface: "{{ ludus_cfg_nat_interface }}"
+  reserved_range_numbers: "{{ ludus_reserved_range_numbers }}"
+  cluster_mode: "{{ ludus_cfg_cluster_mode }}"
+  sdn_zone: "{{ sdn_zone }}"
+  vxlan_tag_base: "{{ sdn_vxlan_tag_base }}"
+
+  # --- Users & access policy -------------------------------------------------
+  prevent_user_ansible_add: "{{ ludus_cfg_prevent_user_ansible_add }}"
+  sso_require_existing_user: "{{ ludus_cfg_sso_require_existing_user }}"
+  create_default_range: "{{ ludus_cfg_create_default_range }}"
+  license_key: "{{ ludus_cfg_license_key }}"
+  expose_admin_port: "{{ ludus_cfg_expose_admin_port }}"
+
+  # --- Ports & data ----------------------------------------------------------
+  port: "{{ ludus_cfg_port }}"
+  admin_port: "{{ ludus_cfg_admin_port }}"
+  wireguard_port: "{{ ludus_cfg_wireguard_port }}"
+  data_directory: "{{ ludus_cfg_data_directory }}"
+  max_log_history: "{{ ludus_cfg_max_log_history }}"
+
+  # --- Secret (ansible-vault; NEVER rewritten on a live install) -------------
+  database_encryption_key: "{{ vault_ludus_database_encryption_key | default('') }}"

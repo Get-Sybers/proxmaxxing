@@ -74,10 +74,7 @@
     msg:
       services_active: "{{ __clv_active.results | map(attribute='item') | list }}"
       config_root: "{{ cluster_ludus_install_root }}"
-      managed_keys: >-
-        {{ (cluster_ludus_install_managed_keys
-            + (cluster_ludus_install_network_keys if cluster_ludus_install_manage_network | bool else []))
-           | map(attribute='key') | list }}
+      managed_keys: "{{ __clc_lines | default([]) | map(attribute='key') | list }}"
       network_managed: "{{ cluster_ludus_install_manage_network | bool }}"
       root_key_staged: "{{ cluster_ludus_install_stage_root_key | bool }}"
-      database_encryption_key: "preserved (never written)"
+      secret_keys: "preserved (verified, never written): {{ cluster_ludus_install_secret_keys }}"

@@ -1,0 +1,41 @@
+---
+argument_specs:
+  main:
+    short_description: "Fill the Ludus config.yml network values (ludus_net.yml) from the live host."
+    description:
+      - >-
+        Runs the cluster admission gate, reads the node's default IPv4 route from
+        the gathered facts, and writes the host network values of the Ludus server
+        C(config.yml) — C(ludus_net_interface), C(ludus_net_local_ip),
+        C(ludus_net_public_ip), C(ludus_net_gateway) and C(ludus_net_netmask) —
+        into C(host_vars/<host>/ludus_net.yml), which
+        C(host_vars/<host>/ludus_config.yml) references.
+      - >-
+        Needs the C(network) fact subset gathered by the play. Read-only on the
+        node; the only write is the inventory file on the controller. Safe under
+        C(--check) (C(--diff) shows the file that would be written).
+    options:
+      cluster_ludus_config_discover_write:
+        type: str
+        required: false
+        default: additional
+        choices: [additional, in_place]
+        description: >-
+          additional writes a proposal under
+          <inventory_dir>/discovered/host_vars/<host>/ludus_net.yml (never
+          loaded); in_place rewrites host_vars/<host>/ludus_net.yml itself.
+      cluster_ludus_config_discover_inventory_dir:
+        type: str
+        required: false
+        default: "{{ inventory_dir }}"
+        description: "Inventory directory the record is written under."
+      cluster_ludus_config_discover_delegate_to:
+        type: str
+        required: false
+        default: localhost
+        description: "The host holding the inventory checkout the record is written to (the controller)."
+      cluster_ludus_config_discover_backup:
+        type: bool
+        required: false
+        default: false
+        description: "Keep a timestamped backup beside a file rewritten in place."

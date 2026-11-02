@@ -6,28 +6,45 @@ cluster_ludus_install_binary_url: ""
 cluster_ludus_install_binary_checksum: ""
 cluster_ludus_install_version: ""
 
-# config.yml reconcile — the SAFE keys, managed by default. The site values
-# (the shared guest pool, the SDN zone, the range numbers reserved for the
-# cluster's own networks) are read from the collection variables the inventory
-# defines (standards §4d); the rest are Ludus's own cluster-mode constants.
-cluster_ludus_install_vm_storage_pool: "{{ ceph_pool }}"
-cluster_ludus_install_vm_storage_format: raw
-cluster_ludus_install_iso_storage_pool: local
-cluster_ludus_install_reserved_range_numbers: "{{ ludus_reserved_range_numbers }}"
-cluster_ludus_install_cluster_mode: true
-cluster_ludus_install_sdn_zone: "{{ sdn_zone }}"
-cluster_ludus_install_vxlan_tag_base: 0
-cluster_ludus_install_proxmox_node: "{{ inventory_hostname }}"
+# The config.yml this role reconciles, as ONE map. The master's `ludus_config`
+# host var (host_vars/<master>/ludus_config.yml) is the source of truth; its
+# values reference the group_vars the inventory already defines (ludus_cfg_*,
+# ceph_pool, sdn_zone, cluster_master_node, ...) so a fact has exactly one home.
+# When `ludus_config`
+# is undefined the role falls back to the safe cluster-mode skeleton below (the
+# same site references, each guarded). Every key in the map is reconciled onto
+# /opt/ludus/config.yml EXCEPT the secret and host-network keys handled specially
+# (see below); keys whose value is empty or null are skipped so the installer's
+# own value is kept.
+cluster_ludus_install_config: "{{ ludus_config | default(cluster_ludus_install_config_fallback) }}"
+cluster_ludus_install_config_fallback:
+  proxmox_node: "{{ cluster_master_node | default(inventory_hostname) }}"
+  proxmox_vm_storage_pool: "{{ ceph_pool | default('') }}"
+  proxmox_vm_storage_format: raw
+  proxmox_iso_storage_pool: local
+  reserved_range_numbers: "{{ ludus_reserved_range_numbers | default([]) }}"
+  cluster_mode: true
+  sdn_zone: "{{ sdn_zone | default('') }}"
+  vxlan_tag_base: "{{ sdn_vxlan_tag_base | default(0) }}"
 
-# Host NETWORK keys are NOT reconciled by default: the installer already set them
-# to the working values, and this cluster's Ceph mesh means a wrong guess would
-# break networking (run-sheet caution C1). Opt in explicitly, and only then are
-# the *_net_* values below written.
+# Secret keys of config.yml: NEVER written by the reconcile. When one is set in
+# the map (from the ansible-vault file) the role asserts the LIVE value matches
+# it, then leaves it untouched — rewriting database_encryption_key decrypts
+# nothing and bricks the credential store.
+cluster_ludus_install_secret_keys:
+  - database_encryption_key
+
+# Host NETWORK keys: reconciled ONLY when cluster_ludus_install_manage_network is
+# true. Default false so the working (Ceph-mesh) network is never restyled by a
+# wrong guess (run-sheet caution C1). Their values come from the same map,
+# filled by playbooks/ludus-config-discover.yml.
 cluster_ludus_install_manage_network: false
-cluster_ludus_install_net_interface: ""
-cluster_ludus_install_net_local_ip: ""
-cluster_ludus_install_net_gateway: ""
-cluster_ludus_install_net_netmask: ""
+cluster_ludus_install_network_keys:
+  - proxmox_interface
+  - proxmox_local_ip
+  - proxmox_public_ip
+  - proxmox_gateway
+  - proxmox_netmask
 
 # Stage the ROOT API key into the house credential store so cluster_secrets'
 # primary path resolves it (it also has an install-path fallback).

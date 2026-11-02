@@ -1,0 +1,69 @@
+---
+- name: "Validate the write mode before touching anything"
+  ansible.builtin.assert:
+    that: cluster_ludus_config_discover_write in ['additional', 'in_place']
+    fail_msg: >-
+      cluster_ludus_config_discover_write must be 'additional' or 'in_place', got
+      '{{ cluster_ludus_config_discover_write }}'.
+    quiet: true
+
+- name: "Cluster admission gate (root + PVE node)"
+  ansible.builtin.include_role:
+    name: get_sybers.cluster.cluster_preflight
+
+- name: "The play must have gathered the network facts"
+  ansible.builtin.assert:
+    that: ansible_facts['default_ipv4'] is defined
+    fail_msg: >-
+      cluster_ludus_config_discover needs the network fact subset; run it from a
+      play with gather_facts: true (playbooks/ludus-config-discover.yml does).
+    quiet: true
+
+- name: "A default IPv4 route must exist to describe the Ludus interface"
+  ansible.builtin.assert:
+    that:
+      - (ansible_facts['default_ipv4']['interface'] | default('')) | length > 0
+      - (ansible_facts['default_ipv4']['address'] | default('')) | length > 0
+    fail_msg: >-
+      No default IPv4 route on {{ inventory_hostname }}, so the Ludus network
+      values cannot be derived. Set them by hand in
+      host_vars/{{ inventory_hostname }}/ludus_net.yml instead.
+    quiet: true
+
+- name: "Shape the discovered Ludus network record (proxmox_* keys of config.yml)"
+  ansible.builtin.set_fact:
+    __lcd_net:
+      ludus_net_interface: "{{ ansible_facts['default_ipv4']['interface'] }}"
+      ludus_net_local_ip: "{{ ansible_facts['default_ipv4']['address'] }}"
+      ludus_net_public_ip: "{{ ansible_facts['default_ipv4']['address'] }}"
+      ludus_net_gateway: "{{ ansible_facts['default_ipv4']['gateway'] | default('') }}"
+      ludus_net_netmask: "{{ ansible_facts['default_ipv4']['netmask'] | default('') }}"
+
+- name: "Resolve where the record is written"
+  ansible.builtin.set_fact:
+    __lcd_dest: >-
+      {{ cluster_ludus_config_discover_inventory_dir
+         ~ ('/discovered' if cluster_ludus_config_discover_write == 'additional' else '')
+         ~ '/host_vars/' ~ inventory_hostname ~ '/ludus_net.yml' }}
+
+- name: "Ensure the record directory exists (on the controller)"
+  ansible.builtin.file:
+    path: "{{ __lcd_dest | dirname }}"
+    state: directory
+    mode: "0755"
+  delegate_to: "{{ cluster_ludus_config_discover_delegate_to }}"
+
+- name: "Write the discovered Ludus network values"
+  ansible.builtin.template:
+    src: ludus_net.yml.j2
+    dest: "{{ __lcd_dest }}"
+    mode: "0644"
+    backup: "{{ cluster_ludus_config_discover_backup | bool }}"
+  delegate_to: "{{ cluster_ludus_config_discover_delegate_to }}"
+
+- name: "Report what was written"
+  ansible.builtin.debug:
+    msg:
+      written: "{{ __lcd_dest }}"
+      mode: "{{ cluster_ludus_config_discover_write }}"
+      values: "{{ __lcd_net }}"

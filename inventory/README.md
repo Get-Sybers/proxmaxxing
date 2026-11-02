@@ -14,7 +14,7 @@ inventory/
 │   ├── group_vars/
 │   │   ├── all/                   #   values every play reads, node-side and controller-side (localhost is a declared host)
 │   │   │   ├── cluster.yml        #     master node, cluster_slug, management LAN
-│   │   │   ├── ludus.yml          #     Ludus control plane: paths, API, identities, reserved range numbers
+│   │   │   ├── ludus.yml          #     Ludus control plane: paths, API, identities, reserved range numbers, config.yml building blocks (ludus_cfg_*)
 │   │   │   ├── credentials.yml    #     the ZFS vault + PocketBase credential store (per-play pointers to one value)
 │   │   │   ├── proxmox_api.yml    #     admin PVE API credential (read from PROXMOX_* env vars, never stored)
 │   │   │   ├── audit_artefacts.yml #    supply-chain pins and mirrors for audit logging
@@ -26,11 +26,13 @@ inventory/
 │   └── host_vars/pi-01, pi-02, pi-03/   # per-node values, one file per topic
 │       ├── node.yml               #     As-Is skeleton — FILLED BY playbooks/cluster-discover.yml
 │       ├── storage_net.yml        #     desired fast-storage links
-│       └── sdn.yml                #     (master only) the NAT uplink
+│       ├── sdn.yml                #     (master only) the NAT uplink
+│       ├── ludus_config.yml       #     (master only) the whole Ludus server config.yml, assembled from references
+│       └── ludus_net.yml          #     (master only) its host network values — FILLED BY playbooks/ludus-config-discover.yml
 ├── hosts.yml                      # untracked — your copy
 ├── group_vars/, host_vars/        # untracked — your copies
-├── discovered/                    # untracked — proposal files cluster-discover.yml writes by default; never loaded
-└── secrets/                       # vaulted -e files (see secrets/README.md); never loaded as inventory
+├── discovered/                    # untracked — proposal files cluster-discover.yml / ludus-config-discover.yml write by default; never loaded
+└── secrets/                       # vaulted -e files (ludus.yml for the DEK; see secrets/README.md); never loaded as inventory
 ```
 
 ## First run
@@ -86,6 +88,35 @@ A fill run (the default) keeps every value already in a record and adds what the
 values. Annotations the node cannot report — a disk's `role`, an interface's purpose — survive both, because disks, pools, guests and the
 cluster's objects are merged on their identity (`dev`, `name`, `id`, ...), not by position. The role README
 ([`roles/cluster_discover`](../roles/cluster_discover/README.md)) lists every key.
+
+## The Ludus server config.yml
+
+`/opt/ludus/config.yml` is expressed once, as the `ludus_config` map in **`host_vars/<master>/ludus_config.yml`** — it is a host fact (it names
+*this* node's Proxmox identity and networking), so it lives in the master's `host_vars`, not in a group. Every value in the map is a reference,
+so a fact has exactly one home:
+
+- shared options → the `ludus_cfg_*` variables in `group_vars/all/ludus.yml` (ports, licence, storage format, policy flags, …);
+- cross-cutting facts → their existing home (`cluster_master_node`, `ceph_pool`, `sdn_zone`, `sdn_vxlan_tag_base`, `ludus_reserved_range_numbers`);
+- host networking → `host_vars/<master>/ludus_net.yml` (see below);
+- the secret `database_encryption_key` → the ansible-vault file `secrets/ludus.yml` (`vault_ludus_database_encryption_key`).
+
+`playbooks/ludus-server-install.yml` (role `cluster_ludus_install`) reconciles the live `config.yml` from this map: it writes every key whose
+resolved value is non-empty, **never rewrites `database_encryption_key`** (it only asserts the running key matches the vaulted one), and touches the
+host network keys only when `cluster_ludus_install_manage_network=true`. Change a value in `group_vars` and it changes for whichever node is master;
+move `ludus_config.yml` / `ludus_net.yml` to the new master's `host_vars/` and the references follow, because nothing is a literal.
+
+`ludus_net.yml` (`ludus_net_interface`, `_local_ip`, `_public_ip`, `_gateway`, `_netmask`) is **discovered state** — fill it from the live host with
+`playbooks/ludus-config-discover.yml` (the interface carrying the default route, its address/netmask and the gateway), the same way `node.yml` is
+filled:
+
+```sh
+ansible-playbook playbooks/ludus-config-discover.yml                                          # proposal under discovered/ — diff, then adopt
+ansible-playbook playbooks/ludus-config-discover.yml --check --diff                           # what would be written, nothing changed
+ansible-playbook playbooks/ludus-config-discover.yml -e cluster_ludus_config_discover_write=in_place   # rewrite ludus_net.yml here
+```
+
+The DEK secret goes in `secrets/ludus.yml` (copy `secrets/ludus.yml.example`, encrypt with `ansible-vault`) and is passed to the install play with
+`-e @inventory/secrets/ludus.yml --ask-vault-pass`.
 
 ## Adding a node
 

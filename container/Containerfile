@@ -54,10 +54,11 @@ RUN pip install --upgrade pip \
     && pip install "ansible-core${ANSIBLE_CORE}" \
     && pip install -r /tmp/requirements-runtime.txt
 
-# Bake the Galaxy collections at the repo's pinned versions. requirements.yml is
-# the collection's single source of pinned versions (ansible-standards §13), so
-# the image and a `make deps` host install resolve identically. Copied from the
-# build context root (the collection root — see run.sh).
+# Bake the dependency collections at the repo's pinned versions. requirements.yml
+# is the collection's single source of pinned versions (ansible-standards §13) and
+# installs them from their upstream GitHub repos at pinned tags (not the Galaxy
+# API), so the image and a `make deps` host install resolve identically even where
+# the Galaxy API is unreachable. Copied from the build context root (see run.sh).
 COPY requirements.yml /tmp/requirements.yml
 RUN ansible-galaxy collection install -r /tmp/requirements.yml -p "$ANSIBLE_COLLECTIONS_PATH"
 
