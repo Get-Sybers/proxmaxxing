@@ -11,24 +11,15 @@ added:
     is a thin projection OF ``proxmox_config`` — every Proxmox-derived key reads
     ``{{ proxmox_config.* }}`` — plus the Ludus-owned ``ludus_cfg_*`` values in
     ``group_vars/all/ludus.yml`` and the vaulted ``database_encryption_key``
-    (``inventory/secrets/ludus.yml``, split vars/vault). ``inventory/example``
-    ships ``proxmox_config.yml`` / ``ludus_config.yml`` for the master and
+    (``inventory/secrets/ludus.yml``, split vars/vault). ``cluster_ludus_install``
+    reconciles ``/opt/ludus/config.yml`` from this ``ludus_config`` map (every key whose
+    resolved value is non-empty; secret keys verified against the running server and
+    never rewritten; host network keys only when
+    ``cluster_ludus_install_manage_network=true``). ``inventory/example`` ships
+    ``proxmox_config.yml`` / ``ludus_config.yml`` for the master and
     ``secrets/ludus.yml.example``.
   - >-
     ``cluster_discover`` now records the management interface, gateway and netmask
     (``node.mgmt_interface`` / ``mgmt_gateway`` / ``mgmt_netmask``, from the default
     IPv4 route) in each node's record, so the Ludus host networking is filled by the
     one discovery that already runs on every node — no separate Ludus-networking play.
-changed:
-  - >-
-    New role ``cluster_ludus_install`` and play ``ludus-server-install`` stand up a
-    Ludus server on a Proxmox cluster node and idempotently reconcile
-    ``/opt/ludus/config.yml`` from the ``ludus_config`` map: every key whose resolved
-    value is non-empty is written (booleans lowercased, lists as JSON). Secret keys
-    (``cluster_ludus_install_secret_keys``, default ``database_encryption_key``) are
-    asserted to match the running server and NEVER rewritten, so a wrong vaulted value
-    refuses the run instead of bricking the credential store; the host network keys are
-    written only when ``cluster_ludus_install_manage_network=true``. On a host with no
-    install the role refuses unless ``cluster_ludus_install_run_installer=true``, in
-    which case it downloads and runs ``ludus-server --no-prompt``. A second run is
-    ``changed=0``.
