@@ -1,0 +1,10 @@
+---
+added:
+  - >-
+    The ``proxmox_config`` master gains ``sdn_range_vnets`` (← the
+    ``sdn_range_vnets`` group var), so the per-range VNets Ludus hands out are
+    part of the single Proxmox-fact master. The sibling ``get_sybers.lxc``
+    collection reads it to validate a range's VNet against this declared source
+    of truth instead of probing the node's live ``/etc/pve/sdn``. Nothing in
+    this collection consumes the new key (``ludus_config`` does not project it);
+    it is additive.
