@@ -13,38 +13,79 @@
       cluster_ludus_install_run_installer) before reconciling its config.
     quiet: true
 
-- name: "config | Read config.yml to capture the encryption key (never rewritten)"
+- name: "config | Read config.yml (captures the secret keys; they are never rewritten)"
   ansible.builtin.slurp:
     src: "{{ cluster_ludus_install_root }}/config.yml"
   register: __clc_before_raw
   no_log: true
 
+- name: "config | Decode the current config once"
+  ansible.builtin.set_fact:
+    __clc_before: "{{ __clc_before_raw.content | b64decode }}"
+  no_log: true
+
 - name: "config | Remember the database_encryption_key line before any edit"
   ansible.builtin.set_fact:
     __clc_dek_before: >-
-      {{ (__clc_before_raw.content | b64decode)
-         | regex_search('(?m)^database_encryption_key:.*$') | default('', true) }}
+      {{ __clc_before | regex_search('(?m)^database_encryption_key:.*$') | default('', true) }}
   no_log: true
 
-- name: "config | Build the set of keys to reconcile (network keys only on opt-in)"
+- name: "config | Each configured secret must already match the live config (never rewritten)"
+  ansible.builtin.assert:
+    that: >-
+      __clc_before is search('(?m)^' ~ (item.key | regex_escape) ~ ':\s*'
+                             ~ (item.value | string | regex_escape) ~ '\s*$')
+    fail_msg: >-
+      {{ item.key }} in {{ cluster_ludus_install_root }}/config.yml does not match the
+      value configured in ludus_config (from inventory/secrets/ludus.yml). This role
+      never rewrites a secret key, so it refuses rather than brick the store — fix the
+      vaulted value to match the running server, or rotate the key with
+      playbooks/cluster-dek-rotate.yml. (Values are not shown.)
+    quiet: true
+  no_log: true
+  loop: >-
+    {{ cluster_ludus_install_config | dict2items
+       | selectattr('key', 'in', cluster_ludus_install_secret_keys)
+       | rejectattr('value', 'none')
+       | rejectattr('value', 'eq', '') | list }}
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: "config | Build the reconcile set (skip secrets, network opt-in and empty values)"
   ansible.builtin.set_fact:
-    __clc_keys: >-
-      {{ cluster_ludus_install_managed_keys
-         + (cluster_ludus_install_network_keys if cluster_ludus_install_manage_network | bool else []) }}
+    __clc_items: >-
+      {{ cluster_ludus_install_config | dict2items
+         | rejectattr('key', 'in', cluster_ludus_install_skip_keys)
+         | rejectattr('value', 'none')
+         | rejectattr('value', 'eq', '') | list }}
+    __clc_lines: []
+
+- name: "config | Format each reconciled key as its config.yml scalar"
+  ansible.builtin.set_fact:
+    __clc_lines: >-
+      {{ __clc_lines + [{'key': item.key, 'val': __clc_fmt, 'line': item.key ~ ': ' ~ __clc_fmt}] }}
+  vars:
+    __clc_fmt: >-
+      {{ (item.value | lower) if (item.value is boolean)
+         else (item.value | to_json) if (item.value is mapping or (item.value is iterable and item.value is not string))
+         else (item.value | string) }}
+  loop: "{{ __clc_items }}"
+  loop_control:
+    label: "{{ item.key }}"
 
 - name: "config | Reconcile each managed key, preserving every other line"
   ansible.builtin.lineinfile:
     path: "{{ cluster_ludus_install_root }}/config.yml"
-    regexp: "^{{ item['key'] | regex_escape }}:"
-    line: "{{ item['key'] }}: {{ item['value'] }}"
+    regexp: "^{{ item.key | regex_escape }}:"
+    line: "{{ item.line }}"
     insertafter: EOF
     backup: true
     owner: root
     group: root
     mode: "0644"
-  loop: "{{ __clc_keys }}"
+  loop: "{{ __clc_lines }}"
   loop_control:
-    label: "{{ item['key'] }}"
+    label: "{{ item.key }}"
   notify: "Restart ludus services"
 
 - name: "config | Re-read config.yml to verify the result on disk"
@@ -73,14 +114,14 @@
 - name: "config | Every managed key is present with the enforced value on disk"
   ansible.builtin.assert:
     that: >-
-      __clc_after is search('(?m)^' ~ (item['key'] | regex_escape) ~ ':\s*'
-                            ~ (item['value'] | regex_escape) ~ '\s*$')
+      __clc_after is search('(?m)^' ~ (item.key | regex_escape) ~ ':\s*'
+                            ~ (item.val | regex_escape) ~ '\s*$')
     fail_msg: >-
-      {{ item['key'] }} is not '{{ item['value'] }}' in config.yml after reconcile.
+      {{ item.key }} is not '{{ item.val }}' in config.yml after reconcile.
     quiet: true
-  loop: "{{ __clc_keys }}"
+  loop: "{{ __clc_lines }}"
   loop_control:
-    label: "{{ item['key'] }}"
+    label: "{{ item.key }}"
   # Under --check lineinfile only simulates, so the re-read still shows the
   # pre-write file; skip the on-disk assertion rather than false-fail.
   when: not ansible_check_mode
