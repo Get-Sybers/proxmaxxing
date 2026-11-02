@@ -5,6 +5,6 @@ trivial:
     ``proxmox_config`` is the single master of the Proxmox-owned facts for every
     collection sharing this inventory (not only the Ludus seam): the sibling
     ``get_sybers.lxc`` collection projects from it as ``ludus_config`` does. It
-    stays a ``host_var`` of the master, so a play that runs on ``localhost``
-    reads it as ``hostvars[cluster_master_node].proxmox_config``;
+    stays a host var of the master, so a play that runs on ``localhost`` reads
+    it as ``hostvars[cluster_master_node].proxmox_config``;
     ``group_vars/all/proxmox_api.yml`` is the shared PVE API contract.

@@ -126,10 +126,12 @@ inventory**. The sibling [`get_sybers.lxc`](https://github.com/get-sybers/lxc) c
 exactly as `ludus_config` does — its `group_vars/all/lxc.yml` reads `proxmox_config.node` and `proxmox_config.interface` (falling back to its own
 discovered record when run on its own). The direction stays one-way: a consumer reads `proxmox_config`, never the reverse.
 
-`proxmox_config` stays a **`host_var` of the master** (so moving the master is still just moving the file). A collection whose plays run on
-`localhost`/`controller` — as both the `cluster_patch_packer_iso` play here and every `get_sybers.lxc` deploy play do — reads it as a fact of the
-master host, `hostvars[cluster_master_node].proxmox_config`, not as a bare `proxmox_config` (a host var is not in scope on `localhost`). The one
-Proxmox fact that has a `group_vars/all` home of its own, `cluster_master_node`, is read directly.
+`proxmox_config` stays a **host var of the master** (so moving the master is still just moving the file). A play that runs on
+`localhost`/`controller` cannot see it as a bare `proxmox_config` (a host var is not in scope on `localhost`), so a consumer that needs the
+map reads it as a fact of the master host, `hostvars[cluster_master_node].proxmox_config` — that is how `get_sybers.lxc`'s `lxc.yml`
+projects `lxc_node` and `lxc_bridge`. A consumer that needs only a single Proxmox fact with a `group_vars/all` home of its own reads that
+home directly: the `cluster_patch_packer_iso` play here, for instance, reads `cluster_master_node` (the home `proxmox_config.node` itself
+references), not the whole map.
 
 `group_vars/all/proxmox_api.yml` (the `PROXMOX_*`-sourced PVE API credential and `pve_validate_certs`) is the **shared PVE API contract**: both
 collections ship the same variables, so the one shared copy serves both.
