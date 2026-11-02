@@ -1,9 +1,13 @@
 ---
-# The Proxmox-owned facts the Ludus server needs, as a HOST var of the node that
-# hosts Ludus (the proxmox_master; pi-01 in this template). This is the single
-# Proxmox -> Ludus seam: host_vars/<master>/ludus_config.yml is a thin projection
-# OF this map, so a Proxmox value has exactly one home and the direction is
-# legible — ludus_config reads proxmox_config, never the reverse.
+# The Proxmox-owned facts, as a HOST var of the node that hosts Ludus (the
+# proxmox_master; pi-01 in this template). This is the single master of the
+# Proxmox-owned facts for every collection that runs against this inventory:
+# host_vars/<master>/ludus_config.yml is a thin projection OF this map, and the
+# sibling get_sybers.lxc collection's group_vars/all/lxc.yml projects from it the
+# same way. A Proxmox value has exactly one home and the direction is legible —
+# a consumer reads proxmox_config, never the reverse. A play that runs on
+# localhost reads it as hostvars[cluster_master_node].proxmox_config (a host var
+# is not in scope on localhost).
 #
 # Every value is a reference to the one authoritative home, or a genuinely
 # Proxmox-owned constant:
