@@ -3,14 +3,385 @@ ancestor: null
 releases:
   0.1.0:
     changes:
-      release_summary: >-
-        Initial import of the collection. This entry was seeded by hand when
-        antsibull-changelog became the generator of ``CHANGELOG.md``; it carries
-        the ``0.1.0`` notes of the previously hand-written Keep a Changelog file.
       added:
-        - >-
-          Initial ``get_sybers.cluster`` collection: Ceph mesh/tuning/diagnostics,
-          SDN zone/VNet setup, audit-logging enforcement, node repository
-          management, storage network configuration, Ludus auth/credential
-          handling, and PCT/packer patching.
+        - 'Containerized Ansible controller under ``container/``. A Debian trixie
+          ``Containerfile`` (same base digest as the molecule substrate) builds an
+          image holding ``ansible-core`` 2.21, the Galaxy collections baked from ``requirements.yml``
+          (the single source of pins), and the Python SDKs those collections need
+          at runtime (``proxmoxer``, ``requests``) plus ``ansible-lint``/``yamllint``.
+          A ``run.sh`` wrapper drives it on Apple''s ``container`` runtime (macOS):
+          it bind-mounts ``ansible/`` so edits need no rebuild, mounts ``~/.ssh``
+          read-only, and forwards the ``PROXMOX_*``/``ANSIBLE_*`` env vars. The image
+          runs the SSH-based cluster plays, ``--syntax-check`` and lint; the ``localhost``
+          credential/vault plays still belong on the master node. Built for Apple
+          ``container`` but the ``Containerfile`` is plain OCI and builds under Docker
+          or Podman unchanged. Excluded from the built collection via ``galaxy.yml``
+          ``build_ignore``.'
+        - 'Initial ``get_sybers.cluster`` collection: Ceph mesh/tuning/diagnostics,
+          SDN zone/VNet setup, audit-logging enforcement, node repository management,
+          storage network configuration, Ludus auth/credential handling, and PCT/packer
+          patching.'
+        - "Ludus server install/reconcile. New role ``cluster_ludus_install`` and\
+          \ play ``ludus-server-install`` stand up a Ludus server on a Proxmox cluster\
+          \ node and then idempotently reconcile the SAFE keys of ``/opt/ludus/config.yml``\
+          \ for this cluster (shared Ceph ``raw`` storage, ``cluster_mode``, the VXLAN\
+          \ ``sdn_zone``, and the ``reserved_range_numbers`` that keep ranges off\
+          \ the Ceph/mesh network, the cluster's storage /16). ``database_encryption_key``\
+          \ is captured before any edit and asserted unchanged after \u2014 it is\
+          \ never rewritten; the host network keys are reconciled only on explicit\
+          \ ``cluster_ludus_install_manage_network`` opt-in. The ROOT API key is staged\
+          \ into the house credential store, services are restarted via a single flushed\
+          \ handler, and the result is verified on disk. On a host with no install\
+          \ the role refuses unless ``cluster_ludus_install_run_installer=true``,\
+          \ in which case it downloads and runs ``ludus-server --no-prompt`` (no reboot\
+          \ on an existing Proxmox host). A second run is ``changed=0``."
+        - New filters ``get_sybers.cluster.config_merge`` (fill or overwrite a configuration
+          mapping from discovered values, keyed lists merged element-wise, null never
+          wins), ``get_sybers.cluster.config_drift`` (every discovered value the configuration
+          lacks or contradicts) and ``get_sybers.cluster.to_config_yaml`` (the block-style,
+          insertion-ordered YAML the inventory files are written in), with unit tests.
+        - 'New play ``cluster-sdn-zone`` idempotently ensures the VXLAN SDN zone (``ludus``)
+          that ``cluster-sdn-setup`` assumes already exists: it creates and applies
+          the zone when absent, refuses an existing zone of the wrong type, and verifies
+          the zone is VXLAN on disk. New ``ludus_install_negative`` Molecule scenario
+          (no install present, installer disabled) must stop at the role''s labelled
+          install guard.'
+        - "New role ``cluster_discover`` and play ``cluster-discover`` \u2014 read\
+          \ the live cluster (PVE version, corosync membership, block devices, ZFS\
+          \ pools, interfaces, guests; cluster status and node fingerprints, storage,\
+          \ users/groups/roles/realms, pools, SDN objects, directory mappings and\
+          \ Ceph via ``ceph_info``) and fill the inventory's As-Is records (``host_vars/<host>/node.yml``,\
+          \ ``group_vars/proxmox_cluster/cluster.yml``) from it. By default it writes\
+          \ proposal files under ``inventory/discovered/`` (never loaded); ``cluster_discover_write=in_place``\
+          \ rewrites the records themselves. Configured values win and discovery fills\
+          \ the gaps unless ``cluster_discover_overwrite=true``; annotations the node\
+          \ cannot report survive either way because disks, pools, guests and cluster\
+          \ objects are merged on their identity key. ``--check --diff`` is a drift\
+          \ report and ``cluster_discover_strict=true`` a drift gate. Positive (fixture-driven\
+          \ render, idempotence, verify) and negative Molecule scenarios."
+        - "Per-role ``meta/argument_specs.yml``, ``README.md``, and ``meta/main.yml``\
+          \ where missing (\xA73), including ``cluster_ludus_auth``."
+        - "The ``proxmox_config`` master gains ``sdn_range_vnets`` (\u2190 the ``sdn_range_vnets``\
+          \ group var), so the per-range VNets Ludus hands out are part of the single\
+          \ Proxmox-fact master. The sibling ``get_sybers.lxc`` collection reads it\
+          \ to validate a range's VNet against this declared source of truth instead\
+          \ of probing the node's live ``/etc/pve/sdn``. Nothing in this collection\
+          \ consumes the new key (``ludus_config`` does not project it); it is additive."
+        - "The whole Ludus server ``config.yml`` is expressed once as two owner-named\
+          \ host-var maps on the ``proxmox_master``, with values flowing one direction\
+          \ (``proxmox_config`` -> ``ludus_config``). ``host_vars/<master>/proxmox_config.yml``\
+          \ owns the Proxmox facts Ludus needs, each a reference to its one home (``cluster_master_node``;\
+          \ ``pve_validate_certs``; ``sdn_vm_storage_pool`` / ``sdn_iso_storage_pool``\
+          \ / ``sdn_zone`` / ``sdn_vxlan_tag_base``; and the host networking from\
+          \ the discovered ``node`` record). ``host_vars/<master>/ludus_config.yml``\
+          \ is a thin projection OF ``proxmox_config`` \u2014 every Proxmox-derived\
+          \ key reads ``{{ proxmox_config.* }}`` \u2014 plus the Ludus-owned ``ludus_cfg_*``\
+          \ values in ``group_vars/all/ludus.yml`` and the vaulted ``database_encryption_key``\
+          \ (``inventory/secrets/ludus.yml``, split vars/vault). ``cluster_ludus_install``\
+          \ reconciles ``/opt/ludus/config.yml`` from this ``ludus_config`` map (every\
+          \ key whose resolved value is non-empty; secret keys verified against the\
+          \ running server and never rewritten; host network keys only when ``cluster_ludus_install_manage_network=true``).\
+          \ ``inventory/example`` ships ``proxmox_config.yml`` / ``ludus_config.yml``\
+          \ for the master and ``secrets/ludus.yml.example``."
+        - "``.ansible-lint`` (``profile: production``) with a documented ``name[casing]``\
+          \ waiver reconciling ansible-lint with the house task-naming form (\xA7\
+          2, \xA711, \xA716)."
+        - "``.github/workflows/release.yaml`` (``Release collection``, Standard 04):\
+          \ on a published GitHub release, ``ansible/ansible-content-actions`` release.yaml\
+          \ publishes to Automation Hub then Galaxy from the ``release`` environment\
+          \ (``AH_TOKEN``, ``ANSIBLE_GALAXY_API_KEY``); ``changelogs/`` makes antsibull-changelog\
+          \ the generator of ``CHANGELOG.md`` with Keep a Changelog sections, the\
+          \ ``0.1.0`` notes seeded into ``changelogs/changelog.yaml`` and the unreleased\
+          \ notes carried as a fragment (\xA72, \xA726, \xA731)."
+        - "``.github/workflows/test.yaml`` (``CI``, Standard 03): changelog, ansible-lint,\
+          \ sanity, unit, and integration via ``ansible/ansible-content-actions@main``,\
+          \ plus ``conform`` mirroring ``.gitlab-ci.yml``; ``all_green`` is the single\
+          \ required check (\xA713, \xA715)."
+        - "``.pre-commit-config.yaml`` running yamllint, ansible-lint, and gitleaks\
+          \ (\xA726)."
+        - "``.yamllint`` tuned for Ansible/Jinja (\xA716)."
+        - "``LICENSE`` (AGPL-3.0-only) matching ``galaxy.yml`` (\xA72, \xA714)."
+        - "``ansible.cfg`` setting ``inject_facts_as_vars = false`` and a meaningful\
+          \ ``ansible_managed`` banner (\xA718, \xA719, \xA721)."
+        - "``cluster_discover`` now records the management interface, gateway and\
+          \ netmask (``node.mgmt_interface`` / ``mgmt_gateway`` / ``mgmt_netmask``,\
+          \ from the default IPv4 route) in each node's record, so the Ludus host\
+          \ networking is filled by the one discovery that already runs on every node\
+          \ \u2014 no separate Ludus-networking play."
+        - "``docs/standards/ansible-standards.md`` \u2014 the Ansible standard (\xA7\
+          1\u2013\xA733 + appendices A\u2013D); rows in ``docs/README.md`` and ``docs/standards/ansible/dev-tools/README.md``\
+          \ (\xA713, \xA715)."
+        - "``docs/standards/ansible/dev-tools/`` \u2014 the Ansible dev-tools standards\
+          \ 00\u201304 (toolchain, collection build loop, tox lint + tox-ansible sanity\
+          \ gates, CI workflow, release workflow), carried verbatim as law across\
+          \ the source repos."
+        - "``requirements.yml`` \u2014 the single source of exact dependency pins\
+          \ (\xA72, \xA725)."
+        - "``scripts/conform`` (the gate) and ``scripts/upgrade`` (\xA713)."
+        - "``scripts/conform`` reports task names outside the \xA711 ``<role>-<stage>\
+          \ | description`` form (327 of 986 today, in 12 files) and records in its\
+          \ header the rules it cannot yet fail on: \xA74 inline ``vars:`` (26 play-level),\
+          \ \xA77 ``changed_when: false`` on a mutating module (7, all controller-local\
+          \ scratch/test fixtures), \xA721 owner/group/mode on every file task (6\
+          \ sites), \xA733 ``meta: end_play`` (2 sites in ``cluster-audit-logging.yml``)\
+          \ (\xA715)."
+        - '``tox.ini`` (the ``lint`` env via prek) and ``tox-ansible.ini`` (the tox-ansible
+          sanity/unit/integration matrix) per Standard 02.'
+      changed:
+        - "Breaking: every role variable is now prefixed with its role name (\xA7\
+          18 var-naming), so callers must rename the inputs and consumed facts they\
+          \ set (e.g. ``sysmon_*`` -> ``sysmon_linux_*``, ``cluster_pb_*`` -> ``cluster_pb_store_*``,\
+          \ and the ``cluster_secrets`` inputs/outputs such as ``infra_secret`` ->\
+          \ ``cluster_secrets_result``)."
+        - "Breaking: roles are renamed to a ``cluster_<category>_<tool>`` scheme (variables\
+          \ and FQCN/``roles:`` references move with them) \u2014 ``cluster_packer_plugins``\
+          \ -> ``cluster_plugin_packer``, ``cluster_ludus_patches`` -> ``cluster_patch_ludus``,\
+          \ and ``cluster_packer_iso_patch`` -> ``cluster_patch_packer_iso``."
+        - "Cluster playbook configuration is no longer hardcoded inline. Facts that\
+          \ were embedded in ``vars:`` blocks \u2014 and in several cases duplicated\
+          \ across plays \u2014 now live in config YAML: cluster-wide values consumed\
+          \ by the node-targeting plays (``sdn_zone``, ``cluster_peers`` derived from\
+          \ each node's ``node.mgmt_ip``, the Ceph pool/replication and canonical\
+          \ ``ceph_osd_tuning``, and the Ceph mesh topology/``expected_egress``) in\
+          \ a new ``inventory/group_vars/proxmox_cluster.yml``; per-host storage links\
+          \ in each ``inventory/host_vars/<host>.yml``; and the values consumed by\
+          \ the ``localhost`` credential/vault and audit plays (which inventory group_vars\
+          \ cannot reach) in ``playbooks/vars/ludus-common.yml`` and ``playbooks/vars/audit-artefacts.yml``,\
+          \ pulled in with ``vars_files``. ``cluster-ceph-diagnose`` now derives its\
+          \ drift-check expectations from the same ``ceph_osd_tuning`` source ``cluster-ceph-tuning``\
+          \ applies, so the two cannot diverge. No runtime behaviour changes \u2014\
+          \ values are preserved exactly."
+        - "Collection identity corrected to ``get_sybers.cluster`` (was the ``get_sybers.example``\
+          \ scaffold); dependencies, ``requirements.yml`` pins, the ``meta/runtime.yml``\
+          \ floor and every role's ``min_ansible_version`` are reconciled (\xA72/\xA7\
+          13)."
+        - Every ``ansible.builtin.command`` is argv-form (one list element per argument,
+          never a free-form string), so an argument that carries a space reaches the
+          program whole and nothing is re-split by the module; the templated command
+          loops carry lists, and the ``ludus source add`` impersonation is a list
+          of arguments.
+        - "Every play-level ``vars:`` / ``vars_files`` block is gone (standards \xA7\
+          5): the audit-logging, Ceph (diagnose, tuning, mesh), SDN, storage-net,\
+          \ node-repos, node-upgrade, credential, vault, DEK, token, identity, GitLab-runner,\
+          \ sources and 1Password plays read their configuration from the inventory\
+          \ under topic-prefixed names (``audit_*``, ``sdn_*``, ``node_repos_*``,\
+          \ ``mesh_*``, ``ceph_*``, ...). No play names a host any more: the hard-coded\
+          \ master hostname became ``hosts: proxmox_master`` and ``delegate_to`` uses\
+          \ ``cluster_master_node``; the Ceph mesh cutover derives its mon targets,\
+          \ OSD hosts, prefixes and bench interface from the mesh config and the live\
+          \ OSD tree."
+        - "Generated files are templates (standards \xA713): the FRR ``frr.conf``\
+          \ and the ``storage-mesh`` stanza of the mesh play, and the ``storage-net``\
+          \ stanzas and hotplug udev rule of the storage-net play."
+        - 'Loop items, declared loop variables and Jinja loop variables are read with
+          bracket notation (``item[''key'']``, never ``item.key``), as the standard
+          requires: dot access breaks on hyphenated keys and collides with the dict
+          methods.'
+        - "Molecule is retargeted off the ``quay.io`` CentOS image onto a throwaway,\
+          \ digest-pinned official Debian 13 container driven by the ``community.docker``\
+          \ driver (PVE is Debian), configured once in a shared ``extensions/molecule/config.yml``\
+          \ base config. Every role has a negative scenario (run without its live\
+          \ dependency it must stop at its own labelled assertion, never crash); ``cluster_secrets``,\
+          \ whose host-side logic is self-contained, also has a positive converge/idempotence/verify\
+          \ scenario with a committed fixture. ``community.docker`` is pinned in ``requirements.yml``\
+          \ as test-only tooling (\xA712)."
+        - "Role ``meta`` ``license:`` fields aligned to the collection's declared\
+          \ ``AGPL-3.0-only`` (\xA72)."
+        - "Role defaults no longer carry site values (standards \xA74c/\xA74d): ``cluster_onepassword_connect_node``,\
+          \ ``cluster_ceph_orphan_sweep_pool``, ``cluster_ludus_install_vm_storage_pool``\
+          \ / ``_sdn_zone`` / ``_reserved_range_numbers`` reference the collection\
+          \ variables ``cluster_master_node``, ``ceph_pool``, ``sdn_zone`` and ``ludus_reserved_range_numbers``\
+          \ the inventory defines; ``sysmon_linux`` defaults are generic (loopback-only\
+          \ exclusions, a neutral stage dir); the ``cluster_preflight`` group name\
+          \ is the documented input ``cluster_preflight_cluster_group`` and its messages\
+          \ name no host."
+        - "Task names with a trailing variable now place the variable at the end only\
+          \ (\xA733)."
+        - "The ``cluster-ghost9-pve-token`` play manages the scoped deploy user, its\
+          \ API token, the ACL-anchor pool and the ACLs through the ``community.proxmox``\
+          \ modules (``proxmox_user`` \u2014 which mints the token and returns its\
+          \ secret \u2014 ``proxmox_pool`` and ``proxmox_access_acl``), authenticating\
+          \ via the collection's documented ``PROXMOX_*`` variables. The fictional\
+          \ ``get_sybers.infra.proxmox_pveum`` module and its invented ``get_sybers.infra``\
+          \ dependency are replaced by ``community.proxmox`` as a real declared dependency."
+        - The inventory directory is now the single config home and ``ansible.cfg``
+          points at it. ``hosts.yml`` holds only hosts and groups (``proxmox_cluster``,
+          the new ``proxmox_master`` for the Ludus node, and a declared ``controller``
+          localhost so the controller-side plays receive group_vars); every value
+          the plays consume lives in ``group_vars/all/<topic>.yml``, ``group_vars/proxmox_cluster/<topic>.yml``
+          and ``host_vars/<host>/<topic>.yml``. ``inventory/cluster.yml`` (a snapshot
+          that was being parsed as an inventory source) became ``group_vars/proxmox_cluster/cluster.yml``;
+          ``inventory/secrets/`` and ``inventory/discovered/`` are ignored as inventory
+          sources.
+        - "``.ansible-lint`` ``var-naming[no-role-prefix]`` waiver justification re-verified:\
+          \ 44 offenders across nine roles, now all named (\xA715, \xA718, \xA728)."
+        - "``cluster-audit-logging`` no longer uses ``meta: end_play`` (standards\
+          \ \xA74e): the gate play skips its block on a rollback and the rollback\
+          \ branch ends the host."
+        - "``cluster_discover`` writes its records with an explicit owner and group\
+          \ \u2014 the new inputs ``cluster_discover_record_owner`` and ``cluster_discover_record_group``\
+          \ default to the identity of the user running Ansible on ``cluster_discover_delegate_to``,\
+          \ read natively by the render stage (``setup``, the ``user`` subset)."
+        - '``cluster_patch_packer_iso`` resolves the build node from ``cluster_master_node``
+          (the single home ``proxmox_config.node`` also reads) instead of slurping
+          and parsing ``proxmox_node``/``proxmox_hostname`` out of Ludus''s rendered
+          ``/opt/ludus/config.yml``. The node is now an overridable input, ``cluster_patch_packer_iso_build_node``.
+          The unused ``cluster_patch_packer_iso_storage_pool`` (declared but never
+          referenced) and ``cluster_patch_packer_iso_config_path`` (only the config.yml
+          re-parse used it) inputs are removed.'
+        - '``cluster_plugin_packer`` declares the plugin tree''s mode (``u=rwX,g=rX,o=rX``)
+          alongside its owner and group.'
+        - '``cluster_preflight`` reads the effective uid and the node name from the
+          delegate''s facts (``setup``, the ``user`` and ``platform`` subsets) instead
+          of running ``id -u`` and ``hostname``; ``cluster-token-restore-from-pve``
+          and ``post-update-reconcile`` assert root from the user facts instead of
+          a ``pipe`` lookup.'
+        - '``cluster_secrets`` ships a ``tasks/main.yml`` that refuses a bare include
+          and names its entry points, like every role in the collection.'
+        - "``galaxy.yml`` ``build_ignore`` now excludes ``molecule/`` and all non-collection\
+          \ repo content (``.ansible``, ``.github``, ``.gitignore``, ``.gitlab-ci.yml``,\
+          \ ``ansible/``, ``look-into.md``, ``tox.ini``, ``tox-ansible.ini``) (\xA7\
+          2)."
+        - "``galaxy.yml`` dependencies now carry upper bounds (``>=x.y.z,<next-major``)\
+          \ and declare every Galaxy collection actually used (``ansible.posix``,\
+          \ ``ansible.utils``, ``ansible.windows``) (\xA72)."
+        - "``meta/runtime.yml`` ``requires_ansible`` raised to ``>=2.16.0``, the floor\
+          \ every role's ``min_ansible_version`` agrees with (``cluster_ceph_orphan_sweep``\
+          \ and ``cluster_patch_packer_iso`` declare 2.16) (\xA72)."
+        - '``packer-iso-redirect.yml`` is the read-only report it had already become:
+          the rollback of a rewrite the role refuses to make is gone, and the root
+          check reads the user facts instead of shelling out.'
+        - "``requirements.yml`` now pins the dependency collections (``community.general``,\
+          \ ``ansible.posix``, ``community.proxmox`` and the test-only ``community.docker``\
+          \ plus its ``community.library_inventory_filtering_v1`` transitive) to git\
+          \ tags on their upstream ``ansible-collections`` GitHub repositories instead\
+          \ of a ``galaxy.ansible.com`` source. The whole closure is listed explicitly,\
+          \ so ``ansible-galaxy collection install -r requirements.yml`` (CI, the\
+          \ container image and ``make deps``) resolves entirely from git and never\
+          \ calls the Galaxy API \u2014 the install now works on managed networks\
+          \ that reach github.com but block Galaxy. The tags are the same releases\
+          \ Galaxy serves and stay inside the ``galaxy.yml`` bounds; ``galaxy.yml``\
+          \ itself is unchanged, so published consumers resolve the dependencies from\
+          \ Galaxy as before."
+        - '``scripts/check_pins.py`` maps a git-sourced entry back to the collection
+          it installs as (the fqcn read from the repo URL) so a git-pinned ``galaxy.yml``
+          dependency satisfies the bound check exactly as a Galaxy pin does; a git
+          tag is the version, a commit SHA records the pin without a numeric bound
+          check. ``scripts/upgrade_pins.py`` already raised git pins to the newest
+          in-bound tag.'
+        - "ansible-lint ``--profile production`` and yamllint pass across the collection\
+          \ \u2014 FQCN, task-name and variable conventions (\xA711/\xA716/\xA718)\
+          \ are enforced, and the lint-config files the hook set needs are in place."
+      fixed:
+        - "Legacy ``ansible_*`` fact reads moved to the ``ansible_facts.*`` namespace\
+          \ (\xA718)."
+        - "Shell pipelines set ``pipefail``; deployed files set explicit ``owner``/``group``/\
+          \ ``mode`` (\xA721, \xA722)."
+        - The ``ceph.conf`` rescue restore declares the identity pmxcfs presents (``root:www-data
+          0640``) instead of a mode the filesystem cannot take.
+        - "``.gitignore`` excludes the ``.ansible/`` lint cache (\xA714)."
+        - '``ansible.cfg`` now sets ``collections_path`` to the repo-local, gitignored
+          ``.ansible/collections`` directory. With no ``collections_path`` set, ``ansible-lint``
+          / ``ansible-compat`` and ``make deps`` installed collections into the global
+          ``~/.ansible/collections``, which then held a second copy of this collection
+          and produced ``Another version ... was found installed`` duplicate-collection
+          warnings (and risked plays importing stale role code, depending on search-path
+          order). Collections now install into the project tree, which ``.gitignore``
+          already excludes via ``/.ansible/``.'
+        - '``cluster-ceph-mesh`` wrote a mangled Jinja comment (a bare ``{`` and two
+          lines of prose) into ``/etc/frr/frr.conf`` on every run; the template carries
+          a real ``{# #}`` comment.'
+        - '``cluster-storage-net`` hard-coded ``thunderbolt0`` in the hotplug udev
+          rule; the rule is rendered for every hotplug link in ``storage_links``.'
+        - "``cluster_discover`` \u2014 the ``gather_cluster`` step that reads Ceph's\
+          \ ``mon_host`` out of ``ceph.conf`` wrote its ``regex_search`` pattern and\
+          \ ``\\1`` backreference with doubled backslashes inside a folded (``>-``)\
+          \ scalar, so the filter received literal ``\\\\`` sequences. On a cluster\
+          \ whose Ceph section is present but whose ``ceph.conf`` has no matching\
+          \ ``mon_host =`` line, ``regex_search`` then raised ``'NoneType' object\
+          \ has no attribute 'group'`` and aborted the entire discovery run. Written\
+          \ with single backslashes (the correct spelling for a folded scalar) the\
+          \ lookup returns the value on a match and ``none`` on no match, matching\
+          \ the two sibling ``regex_search`` calls in the same block."
+        - '``cluster_pb_store`` preflight probes PocketBase with ``failed_when: false``
+          and asserts reachability, turning an unreachable store into a labelled diagnostic
+          instead of an uncaught ``uri`` error.'
+        - "``command``/``shell`` tasks that had a native-module equivalent now use\
+          \ the module; read-only probes carry a ``changed_when`` and a named lint\
+          \ waiver (\xA78)."
+        - '``get_sybers.cluster.to_config_yaml`` lost the sequence indentation the
+          inventory''s yamllint requires wherever PyYAML is built with libyaml (every
+          CI runner, most workstations): the C emitter ignores the Python-level indentation
+          override. The filter now renders through PyYAML''s pure-Python safe dumper,
+          reducing Ansible''s tagged scalars to plain values first, so ``cluster-discover``
+          writes the same file everywhere.'
+        - '``plugins/modules/ceph_info.py`` ``RETURN`` block was not parseable YAML
+          (an unquoted ``": "`` inside a plain scalar), which broke ``ansible-doc``
+          and ``ansible-test sanity``.'
+        - '``scripts/conform`` syntax-check reads stdin from ``/dev/null`` so Ansible''s
+          non-blocking-stdio refusal can no longer be swallowed as a bogus failure.'
+        - '``sysmon_linux`` asserts at entry that ``sysmon_linux_artefacts`` is non-empty,
+          so an unstaged run fails with a clear message instead of crashing at ``sysmon
+          -accepteula -i`` on a host that has no Sysmon package.'
+      release_summary: Initial import of the collection. This entry was seeded by
+        hand when antsibull-changelog became the generator of ``CHANGELOG.md``; it
+        carries the ``0.1.0`` notes of the previously hand-written Keep a Changelog
+        file.
+      removed:
+        - 'Removed the ``cluster_patch_pct`` role and its ``pct-patch`` / ``pct-cve-check``
+          plays (and the ``cluster_patch_pct`` step in ``post-update-reconcile``):
+          the CVE-2026-16658 fix to ``proxmox_pct_remote`` has been migrated upstream
+          into ``community.proxmox`` (the plugin''s current home), so locally re-patching
+          ``community.general``''s deprecated copy is obsolete. Use ``community.proxmox.proxmox_pct_remote``.'
+        - Removed the ansible-creator ``greet`` scaffold (the filter plugin and its
+          unit/integration tests) that the example molecule scenarios referenced.
+        - 'The LXC tier moved to its own repository and collection, `get-sybers/lxc
+          <https://github.com/get-sybers/lxc>`__ (``get_sybers.lxc``), which owns
+          both the build of every hardened container and every sanctioned way of interacting
+          with one. Gone from here: the roles ``cluster_onepassword_connect`` and
+          ``cluster_onepassword_item``, the plays ``cluster-onepassword-connect``
+          and ``cluster-onepassword-reflect``, their Molecule scenarios, ``inventory/group_vars/all/onepassword.yml``,
+          ``inventory/secrets/onepassword.yml.example`` and ``docs/05-1Password-Integration.md``.
+          They continue there as ``lxc_onepassword_connect`` / ``lxc_onepassword_item``,
+          ``deploy-onepassword-connect`` / ``reflect-onepassword-credentials`` and
+          ``doc/howto/deploy-onepassword-connect.md``, with the container lifecycle
+          factored into a shared ``lxc_guest`` role.'
+        - '``onepassword.connect`` is no longer a collection dependency, and the controller
+          container no longer carries ``onepasswordconnectsdk`` or forwards ``OP_CONNECT_*``.'
+        - "``playbooks/bootstrap-site-vars.yml`` and its template \u2014 it vault-encrypted\
+          \ two non-secret values into ``vars/site.yml``, which nothing loaded; ``audit_zpool``\
+          \ and ``audit_min_free_gb`` are plain inventory values now."
+        - '``playbooks/cluster-gitlab-runner.yml`` and ``inventory/group_vars/all/gitlab_runner.yml``.
+          The play built nothing of its own: it fetched a GitLab admin token from
+          the credential vault and handed off to the ``get_sybers.infra`` collection''s
+          runner play, which is not part of this repository. The cluster runs no GitLab
+          or GitLab runner, so the handoff and the vault path it named are retired.'
+        - "``playbooks/cluster-verify-host-vars.yml`` \u2014 it checked host_vars\
+          \ keys that did not exist (``ceph_roles``, ``rpool_layout``, ``rpool_disk_serial``,\
+          \ ``ceph_osd_disk_serial``) and read facts under the wrong name (``_rpool_serials_live``\
+          \ for ``__rpool_serials_live``), so it never verified anything; ``cluster-discover.yml\
+          \ --check --diff`` (and ``cluster_discover_strict``) replaces it."
+        - "``playbooks/vars/ludus-common.yml`` and ``playbooks/vars/audit-artefacts.yml``\
+          \ \u2014 folded into ``group_vars/all``."
+    fragments:
+      - 0-unreleased-pre-antsibull.yml
+      - ci-lanes-and-caches.yml
+      - ci-sanity-cache-python-version.yml
+      - cluster-config-discovery.yml
+      - cluster-discover-mon-host-regex.yml
+      - config-yaml-libyaml.yml
+      - conformance.yml
+      - container-controller.yml
+      - externalize-cluster-config.yml
+      - git-sourced-collection-pins.yml
+      - local-collections-path.yml
+      - ludus-config-externalize.yml
+      - ludus-server-install.yml
+      - move-lxc-tier.yml
+      - packer-iso-build-node-from-master.yml
+      - proxmox-config-sdn-range-vnets.yml
+      - proxmox-config-shared-master.yml
+      - remove-gitlab-runner-handoff.yml
+      - standards-argv-commands.yml
+      - standards-dict-access.yml
     release_date: '2026-08-25'

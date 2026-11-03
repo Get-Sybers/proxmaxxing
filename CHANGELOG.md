@@ -5,12 +5,14 @@ All notable changes to `get_sybers.cluster` are documented here. The format is
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (`0.y.z`
 until the interface is stable).
 
-`antsibull-changelog` generates this file from `changelogs/fragments/` at
-release time; until the first release from this repository, the unreleased
-notes live in the fragments. The `0.1.0` notes seeded into
-`changelogs/changelog.yaml` predate this repository.
+`changelogs/changelog.yaml` is the machine-readable changelog (maintained with
+`antsibull-changelog`, consumed on a Galaxy release); this file is the
+human-readable Keep a Changelog view, where `[Unreleased]` collects changes not
+yet in a tagged release.
 
 ## [Unreleased]
+
+## [0.1.0] - 2026-11-02
 
 ### Added
 
@@ -45,4 +47,5 @@ notes live in the fragments. The `0.1.0` notes seeded into
   Release workflows, the branch and tag rulesets, Dependabot, CODEOWNERS,
   the community files and the house standards under `doc/standards/`.
 
-[Unreleased]: https://github.com/get-sybers/proxmaxxing/compare/8ade96c...HEAD
+[Unreleased]: https://github.com/get-sybers/proxmaxxing/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/get-sybers/proxmaxxing/compare/8ade96c...v0.1.0
