@@ -18,7 +18,7 @@
 # building, so it deliberately contains no Jinja delimiters anywhere (not even in
 # a comment) and no COPY (the build context is the per-scenario directory, which
 # is irrelevant here).
-FROM docker.io/library/debian:trixie-slim@sha256:918311b7b6c4c6f68b232ba516584925f6c78ad82b6fd534b98979df6438e483
+FROM docker.io/library/debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 
 # A molecule-managed container needs: python3 (ansible's target interpreter),
 # python3-apt (so the apt module is idempotent rather than shelling out),
